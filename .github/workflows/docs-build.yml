@@ -33,6 +33,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Check CHANGELOG.md is in sync with src/pages/changelog.md
+        run: npm run check-changelog-sync
+
       - name: Build site
         run: npm run build
         env:
