@@ -98,6 +98,23 @@ You'll land on the Dashboard. From here, the [UI walkthrough tutorial](./install
 
 The secrets file at `deploy/compose/.env.local` carries everything the control plane reads from environment variables at startup. There are three layers — what `install.sh` writes for you, what you may want to add for optional integrations, and what you should **not** put here (it goes through the UI instead).
 
+### Quick API-key reference (where each key lives)
+
+A frequent first-install question: *which third-party API keys do I actually need, and where do they go?* Single-glance answer:
+
+| Service | API key required? | Where it goes | Required by |
+|---|---|---|---|
+| **helmdeck control plane** | the four secrets from `install.sh` (auto-generated) | `.env.local` | the platform itself |
+| **Firecrawl** (self-hosted overlay) | **No** — runs in `USE_DB_AUTHENTICATION=false` on the private `baas-net` bridge | nowhere | `web.scrape`, `research.deep`, `content.ground` |
+| **Docling** (self-hosted overlay) | **No** — same private-bridge story | nowhere | `doc.parse` |
+| **Anthropic / OpenAI / Gemini / Ollama / Deepseek** (AI gateway providers) | yes | UI → *AI Providers* panel (`/admin/ai-providers`) | vision packs, `web.test`, `research.deep`, `content.ground` |
+| **OpenRouter** (OpenAI-compatible aggregator, env-var fast path) | yes | `.env.local` as `HELMDECK_OPENROUTER_API_KEY` | gateway dispatcher when used through OpenRouter |
+| **GitHub PAT** (`github-token`) | yes | UI → *Vault* panel (`/admin/vault`), or install.sh interactive prompt | private-repo `repo.fetch`/`repo.push`, `github.*` family |
+| **ElevenLabs** (`elevenlabs-key`) | yes | UI → *Vault* panel | `slides.narrate` full TTS (without it, ships silent video) |
+| **OpenClaw model auth** (the LLM driving the agent) | yes | OpenClaw's own auth flow → `~/.openclaw/` | OpenClaw chat-UI itself, NOT a helmdeck concern |
+
+**Bottom line for a fresh install**: the only API keys you *must* obtain to use overlay packs are an AI provider key (one of Anthropic/OpenAI/Gemini/OpenRouter — for the gateway). Everything else (Firecrawl, Docling) ships fully self-contained.
+
 ### What `install.sh` writes for you (always present)
 
 | Variable | Purpose | Rotate? |
@@ -116,8 +133,8 @@ These are commented-out in `deploy/compose/.env.example`. Uncomment + edit `.env
 
 | Variable | Set to | Required by | Notes |
 |---|---|---|---|
-| `HELMDECK_FIRECRAWL_ENABLED` | `true` | `web.scrape`, `research.deep`, `content.ground` | Also bring up the Firecrawl overlay: `docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.firecrawl.yml --env-file deploy/compose/.env.local up -d`. |
-| `HELMDECK_DOCLING_ENABLED` | `true` | `doc.parse` | Also bring up the Docling overlay: same pattern with `compose.docling.yml`. `doc.ocr` (Tesseract fallback) works without this. |
+| `HELMDECK_FIRECRAWL_ENABLED` | `true` | `web.scrape`, `research.deep`, `content.ground` | Also bring up the Firecrawl overlay: `docker compose -f deploy/compose/compose.yaml -f deploy/compose/compose.firecrawl.yml --env-file deploy/compose/.env.local up -d`. **No API key needed**: the overlay runs in `USE_DB_AUTHENTICATION=false` mode and only accepts callers on the private `baas-net` bridge, so the control plane reaches it without auth. The hosted Firecrawl SaaS (`api.firecrawl.dev`) is **not** what helmdeck calls — only the self-hosted overlay. |
+| `HELMDECK_DOCLING_ENABLED` | `true` | `doc.parse` | Also bring up the Docling overlay: same pattern with `compose.docling.yml`. **No API key needed** — same private-bridge story as Firecrawl. `doc.ocr` (Tesseract fallback) works without this overlay. |
 | `HELMDECK_PLAYWRIGHT_MCP_ENABLED` | `false` (override default `true`) | `web.test` (when disabled, returns clear error) | Default is on. Set `false` only on tiny VMs to skip ~80 MB of Node + Playwright in the sidecar. |
 | `HELMDECK_SIDECAR_PYTHON` | `helmdeck-sidecar-python:dev` | `python.run` | Run `make sidecars` first to build the image. Without this, the pack returns `session_unavailable: No such image: ghcr.io/tosin2013/helmdeck-sidecar-python:latest`. |
 | `HELMDECK_SIDECAR_NODE` | `helmdeck-sidecar-node:dev` | `node.run` | Same shape as above. |
