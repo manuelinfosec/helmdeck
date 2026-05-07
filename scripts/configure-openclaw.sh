@@ -109,6 +109,38 @@ docker ps --format '{{.Names}}' | grep -qx "$HELMDECK_CONTAINER" \
 docker ps --format '{{.Names}}' | grep -qx "$OPENCLAW_CONTAINER" \
 	|| die "$OPENCLAW_CONTAINER is not running (start with 'docker compose -f /root/openclaw/docker-compose.yml up -d openclaw-gateway')"
 
+# Probe for the LLM-provider auth OpenClaw needs before this script can pin
+# a model. Helmdeck's gateway env-var (HELMDECK_OPENROUTER_API_KEY in
+# .env.local) is *separate* — that wires the gateway, not OpenClaw itself.
+# OpenClaw stores its own auth under ~/.openclaw/. If the provider implied
+# by --model isn't authenticated, every chat-UI tool call will 401, and
+# the failure mode is visible only at runtime. Catch it here.
+provider_from_model() {
+	local m="$1"
+	# strip "openrouter/" prefix and take everything before the next '/'
+	# so "openrouter/anthropic/claude-..." → "openrouter".
+	printf '%s' "$m" | awk -F'/' '{print $1}'
+}
+PROVIDER="$(provider_from_model "$MODEL")"
+if [[ "$PROVIDER" != "openclaw" && "$PROVIDER" != "" ]]; then
+	if ! docker compose -f /root/openclaw/docker-compose.yml \
+			run --rm openclaw-cli models auth list 2>/dev/null \
+			| grep -qiE "^[[:space:]]*${PROVIDER}([[:space:]]|$)"; then
+		warn "OpenClaw has no '${PROVIDER}' auth configured."
+		warn ""
+		warn "  Run this once, paste your API key when prompted, then re-run me:"
+		warn ""
+		warn "    docker compose -f /root/openclaw/docker-compose.yml run --rm openclaw-cli \\"
+		warn "      models auth login ${PROVIDER}"
+		warn ""
+		warn "  (This is OpenClaw's own model auth — separate from helmdeck's"
+		warn "  gateway env vars in deploy/compose/.env.local. See"
+		warn "  docs/integrations/openclaw.md §5 'Configure OpenClaw's LLM provider'.)"
+		die "missing ${PROVIDER} auth"
+	fi
+	log "preflight: ${PROVIDER} auth is configured"
+fi
+
 log "preflight ok"
 
 # --- 1. bridge baas-net into the openclaw container -----------------------
