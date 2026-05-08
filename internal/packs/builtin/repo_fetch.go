@@ -191,6 +191,14 @@ func repoFetchHandler(v *vault.Store, eg *security.EgressGuard) packs.HandlerFun
 			return nil, &packs.PackError{Code: packs.CodeHandlerFailed,
 				Message: fmt.Sprintf("git clone exec: %v", err)}
 		}
+		// Issue #94 — empty (refless) remotes get a fast typed error
+		// instead of letting git stumble forward and the script error
+		// late on `git rev-parse HEAD`. The shell scripts emit exit
+		// 99 when `git ls-remote` returns no refs.
+		if execRes.ExitCode == 99 {
+			return nil, &packs.PackError{Code: packs.CodeInvalidInput,
+				Message: fmt.Sprintf("remote %s has no branches; push at least one commit before cloning", in.URL)}
+		}
 		if execRes.ExitCode != 0 {
 			stderr := string(execRes.Stderr)
 			if len(stderr) > 1024 {
@@ -274,6 +282,12 @@ func buildRepoFetchSSHScript(url, ref string, depth int) string {
 		"cat > \"$KEY_DIR\"/id_rsa",
 		"chmod 600 \"$KEY_DIR\"/id_rsa",
 		"export GIT_SSH_COMMAND=\"ssh -i $KEY_DIR/id_rsa -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$KEY_DIR/known_hosts -o IdentitiesOnly=yes\"",
+		// Issue #94 — fast-fail on empty (refless) remotes. ls-remote
+		// returns exit 0 with no output when the remote has no branches;
+		// downstream `git clone` then succeeds with an empty working
+		// tree and `git rev-parse HEAD` errors late. Exit 99 is mapped
+		// to invalid_input by the Go handler.
+		"if [ -z \"$(git ls-remote --heads " + shellQuote(url) + " 2>/dev/null)\" ]; then exit 99; fi",
 		"git clone " + depthFlag + shellQuote(url) + " \"$CLONE_DIR\" 1>&2",
 	}
 	if ref != "" {
@@ -317,7 +331,10 @@ func buildRepoFetchHTTPSScript(gitURL, ref string, depth int, hasCredential bool
 			"export GIT_TERMINAL_PROMPT=0",
 		)
 	}
+	// Issue #94 — fast-fail on empty (refless) remotes before paying
+	// the full clone round-trip. Same sentinel exit code as the SSH path.
 	lines = append(lines,
+		"if [ -z \"$(git ls-remote --heads "+shellQuote(gitURL)+" 2>/dev/null)\" ]; then exit 99; fi",
 		"git clone "+depthFlag+shellQuote(gitURL)+" \"$CLONE_DIR\" 1>&2",
 	)
 	if ref != "" {

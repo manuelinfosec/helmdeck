@@ -166,6 +166,44 @@ func TestRepoFetch_WrongCredentialType(t *testing.T) {
 	}
 }
 
+func TestRepoFetch_EmptyRemoteRefless_FailsFast(t *testing.T) {
+	// Issue #94: a refless remote (newly-created repo, no commits pushed)
+	// must surface as invalid_input, not a hung clone or a late
+	// rev-parse HEAD failure. The shell script emits exit 99 when
+	// `git ls-remote --heads` returns no output; the handler maps that
+	// to CodeInvalidInput with a fix-it message.
+	rec := &recordingExecutor{replies: []session.ExecResult{
+		{ExitCode: 99, Stderr: []byte("")}, // ls-remote returned empty; script bailed
+	}}
+	eng := newRepoEngine(t, rec)
+	_, err := eng.Execute(context.Background(), RepoFetch(nil, nil),
+		json.RawMessage(`{"url":"https://github.com/owner/empty-repo.git"}`))
+	if err == nil {
+		t.Fatal("expected empty-repo refusal")
+	}
+	pe, ok := err.(*packs.PackError)
+	if !ok || pe.Code != packs.CodeInvalidInput {
+		t.Fatalf("expected invalid_input, got %T %v", err, err)
+	}
+	if !strings.Contains(pe.Message, "no branches") {
+		t.Errorf("error should explain the empty-remote diagnosis: %v", pe.Message)
+	}
+	if !strings.Contains(pe.Message, "https://github.com/owner/empty-repo.git") {
+		t.Errorf("error should echo the offending URL: %v", pe.Message)
+	}
+	// The shell script must include the ls-remote fast-fail.
+	if len(rec.calls) == 0 {
+		t.Fatal("no exec calls recorded")
+	}
+	script := strings.Join(rec.calls[0].Cmd, " ")
+	if !strings.Contains(script, "git ls-remote --heads") {
+		t.Errorf("script should include ls-remote fast-fail: %s", script)
+	}
+	if !strings.Contains(script, "exit 99") {
+		t.Errorf("script should exit 99 on empty remote: %s", script)
+	}
+}
+
 func TestRepoFetch_GitCloneFailureBubbles(t *testing.T) {
 	v := vaultWithSSHCred(t, "github.com", []byte("key"))
 	ex := &recordingExecutor{replies: []session.ExecResult{
