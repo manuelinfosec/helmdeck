@@ -65,6 +65,36 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
+          label: 'web',
+          items: [
+            'reference/packs/web/scrape',
+            'reference/packs/web/scrape-spa',
+            'reference/packs/web/test',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'vision',
+          items: [
+            'reference/packs/vision/click-anywhere',
+            'reference/packs/vision/extract-visible-text',
+            'reference/packs/vision/fill-form-by-label',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'github',
+          items: [
+            'reference/packs/github/create-issue',
+            'reference/packs/github/list-issues',
+            'reference/packs/github/list-prs',
+            'reference/packs/github/post-comment',
+            'reference/packs/github/create-release',
+            'reference/packs/github/search',
+          ],
+        },
+        {
+          type: 'category',
           label: 'http',
           items: ['reference/packs/http/fetch'],
         },
