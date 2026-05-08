@@ -20,6 +20,12 @@ Helmdeck ships its agent instructions as a native **OpenClaw Skill** at `skills/
    ```
    The script is idempotent; re-running it without other flags will only touch the skill, the JWT (if expiring), and the model pin.
 5. **Document upstream regressions** — if OpenClaw itself ships a breaking change between our tested versions and the current one, add a row to the table in `docs/integrations/openclaw-upgrade-runbook.md` pointing at the affected version range and the workaround.
+6. **Refresh the README + cost-positioning numbers** — `README.md` opens with time-stamped prose ("Today's helmdeck install ran a full 6-step code-edit loop … for $0.07") and a four-row cost-comparison table. The same numbers live in the long-form `docs/explanation/why-helmdeck.md` and the cost-positioning blog post at `website/blog/2026-05-08-cheap-models-do-frontier-work.md`. On a release that meaningfully changes pack performance, the chat model recommendation, or the OpenRouter pricing landscape:
+   - Re-run the 5 reproduction workflows from `docs/explanation/why-helmdeck.md` §"Run the comparison yourself" against the new pack set.
+   - Update the comparison table in **all three places** (README, long-form explanation, blog post) so the numbers don't drift between them.
+   - Either revise the time-stamped prose at the top of the README to reflect the new release, or — if numbers haven't moved meaningfully — leave it but add a "Last verified: vX.Y on YYYY-MM-DD" footer line so readers know the cited workflow is fresh enough.
+
+   On a release that does NOT change agent-side performance, the cost numbers are stable enough to skip this step; only update if you'd otherwise be overstating the gap.
 
 **Related:**
 - [OpenClaw upgrade runbook](integrations/openclaw-upgrade-runbook.md) — the operator-facing sync procedure
