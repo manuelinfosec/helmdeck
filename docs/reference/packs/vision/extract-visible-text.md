@@ -34,10 +34,32 @@ Vision packs run on a **desktop-mode** session (`HELMDECK_MODE=desktop` — set 
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__vision-extract_visible_text with model openrouter/anthropic/claude-haiku-4.5." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__vision-extract_visible_text against the visible desktop. Use model openrouter/anthropic/claude-haiku-4.5. Tell me what text the vision model transcribed (truncate to 200 chars if very long).
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__vision-extract_visible_text",
+  "arguments": {
+    "model": "openrouter/anthropic/claude-haiku-4.5"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"vision.extract_visible_text","version":"v1","output":{"model":"openrouter/anthropic/claude-haiku-4.5","text":""},"duration_ms":9509607044,"session_id":"09abae0f-3383-4a03-9fde-1655c18eddc9"}
+```
+
+**Agent's final reply**:
+
+> The vision extraction returned an empty string, indicating no readable text was detected on the visible desktop.
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1835).*
 
 ## Developer reference (`curl`)
 

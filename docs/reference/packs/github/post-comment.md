@@ -33,10 +33,30 @@ Stateless.
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__github-post_comment against repo \"tosin2013/helmdeck-pack-doc-fixtures\" issue_number=1 body=\"Demo comment.\" credential=github-token." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__github-post_comment against repo "tosin2013/helmdeck-pack-doc-fixtures", issue_number 1, body="Demo comment captured during pack doc work.", credential=github-token. Tell me the comment id and url.
+
+**Tool call** (1 call, no failures — call/result pair was emitted but the transcript-extractor missed the `toolCall` event):
+
+```json
+{
+  "name": "helmdeck__github-post_comment",
+  "arguments": {
+    "repo": "tosin2013/helmdeck-pack-doc-fixtures",
+    "issue_number": 1,
+    "body": "Demo comment captured during pack doc work.",
+    "credential": "github-token"
+  }
+}
+```
+
+**Agent's final reply**:
+
+> - **Comment ID:** 4406720872  
+> - **URL:** <https://github.com/tosin2013/helmdeck-pack-doc-fixtures/issues/1#issuecomment-4406720872>
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1562).*
 
 ## Developer reference (`curl`)
 

@@ -38,10 +38,40 @@ Add via the *Vault* panel before invoking. If absent, this pack returns `handler
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__github-create_issue against repo \"tosin2013/helmdeck-pack-doc-fixtures\" with title=\"Demo issue from helmdeck pack capture\", body=\"This issue is a demo artifact.\", labels=[\"doc-capture\"], credential=github-token." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__github-create_issue against repo "tosin2013/helmdeck-pack-doc-fixtures" with title="Demo issue from helmdeck pack capture", body="This issue is a demo artifact captured while documenting the github.create_issue pack. Safe to close.", labels=["doc-capture"], credential=github-token. Tell me the issue number and html_url.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__github-create_issue",
+  "arguments": {
+    "repo": "tosin2013/helmdeck-pack-doc-fixtures",
+    "title": "Demo issue from helmdeck pack capture",
+    "body": "This issue is a demo artifact captured while documenting the github.create_issue pack. Safe to close.",
+    "labels": [
+      "doc-capture"
+    ],
+    "credential": "github-token"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"github.create_issue","version":"v1","output":{"url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/2","repository_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures","labels_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/2/labels{/name}","comments_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/2/comments","events_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/2/events","html_url":"https://github.com/tosin2013/helmdeck-pack-doc-fixtures/issues/2","id":4406682427,"node_id":"I_kwDOSX1U_c8AAAABBqijOw","number":2,"title":"Demo issue from helmdeck pack capture","user":{"login":"tosin2013","id":1975599,"node_id":"MDQ6VXNlcjE5NzU1OTk=","avatar_url
+  ...[truncated]
+```
+
+**Agent's final reply**:
+
+> - **Issue number:** 2  
+> - **HTML URL:** <https://github.com/tosin2013/helmdeck-pack-doc-fixtures/issues/2>
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1513).*
 
 ## Developer reference (`curl`)
 

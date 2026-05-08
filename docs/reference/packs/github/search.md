@@ -33,10 +33,37 @@ Stateless.
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__github-search with query=\"repo:tosin2013/helmdeck-pack-doc-fixtures is:issue\" type=issues credential=github-token." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__github-search with query="repo:tosin2013/helmdeck-pack-doc-fixtures is:issue" and type="issues" and credential=github-token. Tell me total_count and the titles.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__github-search",
+  "arguments": {
+    "query": "repo:tosin2013/helmdeck-pack-doc-fixtures is:issue",
+    "type": "issues",
+    "credential": "github-token"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"github.search","version":"v1","output":{"total_count":1,"incomplete_results":false,"items":[{"url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/1","repository_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures","labels_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/1/labels{/name}","comments_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/1/comments","events_url":"https://api.github.com/repos/tosin2013/helmdeck-pack-doc-fixtures/issues/1/events","html_url":"https://github.com/tosin2013/helmdeck-pack-doc-fixtures/issues/1","id":4406612107,"node_id":"I_kwDOSX1U_c8AAAABBqeQiw","number":1,"title":"Demo issue from helmdeck pack capture","user":{"login":"tosin2013","id":19755
+  ...[truncated]
+```
+
+**Agent's final reply**:
+
+> - **Total matching issues:** 1  
+> - **Titles:**  
+>   1. “Demo issue from helmdeck pack capture”
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1654).*
 
 ## Developer reference (`curl`)
 

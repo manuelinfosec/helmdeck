@@ -33,10 +33,47 @@ Partial-result handling matters because SPAs are flaky: one missing selector sho
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__web-scrape_spa to scrape https://example.com using fields {\"heading\": {\"selector\": \"h1\", \"format\": \"text\"}, \"intro\": {\"selector\": \"p\", \"format\": \"text\"}}." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__web-scrape_spa to scrape https://example.com using fields {"heading": {"selector": "h1", "format": "text"}, "intro": {"selector": "p", "format": "text"}}. Tell me what you got back for each field and which (if any) were missing.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__web-scrape_spa",
+  "arguments": {
+    "url": "https://example.com",
+    "fields": {
+      "heading": {
+        "selector": "h1",
+        "format": "text"
+      },
+      "intro": {
+        "selector": "p",
+        "format": "text"
+      }
+    }
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"web.scrape_spa","version":"v1","output":{"data":{"heading":"Example Domain","intro":"This domain is for use in documentation examples without needing permission. Avoid use in operations."},"missing":[],"url":"https://example.com"},"duration_ms":3353888174,"session_id":"f60ccd4b-bb5e-47d8-acef-af63abd80b6c"}
+```
+
+**Agent's final reply**:
+
+> **Results**
+> 
+> - **heading:** “Example Domain”  
+> - **intro:** “This domain is for use in documentation examples without needing permission. Avoid use in operations.”  
+> 
+> All requested fields were successfully extracted; none were missing.
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1717).*
 
 ## Developer reference (`curl`)
 

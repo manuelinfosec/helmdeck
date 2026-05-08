@@ -39,10 +39,40 @@ Why Playwright MCP and not selectors? Accessibility-tree snapshots return struct
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__web-test to verify that https://example.com loads correctly. Instruction: \"navigate to the page, confirm the heading 'Example Domain' is present, then exit\". Use model openrouter/openai/gpt-oss-120b. assertions=[\"Example Domain\"]." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__web-test to verify that https://example.com loads correctly. Instruction: "navigate to the page, confirm the heading 'Example Domain' is present, then exit". Use model openrouter/openai/gpt-oss-120b. Set assertions=["Example Domain"]. Tell me whether completed=true and which assertions passed.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__web-test",
+  "arguments": {
+    "url": "https://example.com",
+    "instruction": "navigate to the page, confirm the heading 'Example Domain' is present, then exit",
+    "assertions": [
+      "Example Domain"
+    ],
+    "max_steps": 10,
+    "model": "openrouter/openai/gpt-oss-120b"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"web.test","version":"v1","output":{"assertions_passed":true,"completed":true,"final_snapshot":"### Open tabs\n- 0: (current) [Example Domain](https://example.com/)\n- 1: [New Tab](chrome://new-tab-page/)\n### Page\n- Page URL: https://example.com/\n- Page Title: Example Domain\n- Console: 1 errors, 0 warnings\n### Snapshot\n```yaml\n- generic [ref=e2]:\n  - heading \"Example Domain\" [level=1] [ref=e3]\n  - paragraph [ref=e4]: This domain is for use in documentation examples without needing permission. Avoid use in operations.\n  - paragraph [ref=e5]:\n    - link \"Learn more\" [ref=e6] [cursor=pointer]:\n      - /url: https://iana.org/domains/example\n```","reason":"model emitted done","steps":[{"tool":"browser_navigate","arguments":{"url":"https://example.com"},"result":"### Ran
+  ...[truncated]
+```
+
+**Agent's final reply**:
+
+> **Result:** completed = true  
+> **Assertions passed:** true (the heading “Example Domain” was found).
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1750).*
 
 ## Developer reference (`curl`)
 

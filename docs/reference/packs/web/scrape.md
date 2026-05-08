@@ -48,10 +48,33 @@ When the toggle is off the pack returns `invalid_input: web.scrape is disabled (
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use the helmdeck__web-scrape tool to scrape https://example.com to clean markdown. Tell me the page title and the first sentence of the markdown." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use the helmdeck__web-scrape tool to scrape https://example.com to clean markdown. Tell me the page title and the first sentence of the markdown.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__web-scrape",
+  "arguments": {
+    "url": "https://example.com"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"web.scrape","version":"v1","output":{"markdown":"Example Domain\n==============\n\nThis domain is for use in documentation examples without needing permission. Avoid use in operations.\n\n[Learn more](https://iana.org/domains/example)","status":200,"title":"Example Domain","url":"https://example.com"},"duration_ms":115733635}
+```
+
+**Agent's final reply**:
+
+> - **Page title:** Example Domain  
+> - **First sentence of the markdown:** “This domain is for use in documentation examples without needing permission.”
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1685).*
 
 ## Developer reference (`curl`)
 

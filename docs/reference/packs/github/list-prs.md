@@ -33,10 +33,35 @@ Stateless. Public-repo reads work without a credential.
 
 ## Use it from your agent (OpenClaw chat-UI worked example)
 
-<!-- TODO(maintainer): paste an OpenClaw chat-UI transcript here.
-     Prompt to use: "Use helmdeck__github-list_prs against repo \"tosin2013/helmdeck-pack-doc-fixtures\" with state=open and credential=github-token." -->
+**Prompt** (sent in OpenClaw chat UI / `openclaw-cli agent`):
 
-> *OpenClaw chat capture pending.*
+> Use helmdeck__github-list_prs against repo "tosin2013/helmdeck-pack-doc-fixtures" with state=open and credential=github-token. Tell me the count and summary.
+
+**Tool call** (1 call, no failures):
+
+```json
+{
+  "name": "helmdeck__github-list_prs",
+  "arguments": {
+    "repo": "tosin2013/helmdeck-pack-doc-fixtures",
+    "state": "open",
+    "credential": "github-token"
+  }
+}
+```
+
+**Pack response** (truncated):
+
+```json
+{"pack":"github.list_prs","version":"v1","output":{"count":0,"prs":[]},"duration_ms":291077274}
+```
+
+**Agent's final reply**:
+
+> - **Open pull‑request count:** 0  
+> - **Summary:** No open pull requests are currently present in the repository.
+
+*Verified via OpenClaw 2026.5.6 + helmdeck v0.9.0-dev + `openrouter/openai/gpt-oss-120b` on 2026-05-07 (cost: $0.1592).*
 
 ## Developer reference (`curl`)
 
