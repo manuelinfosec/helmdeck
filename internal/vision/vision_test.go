@@ -55,11 +55,13 @@ type scriptedDispatcher struct {
 	calls    int
 	replies  []gateway.ChatResponse
 	replyErr []error
+	captured []gateway.ChatRequest // requests passed to Dispatch — useful for asserting prior-attempts threading
 }
 
-func (s *scriptedDispatcher) Dispatch(_ context.Context, _ gateway.ChatRequest) (gateway.ChatResponse, error) {
+func (s *scriptedDispatcher) Dispatch(_ context.Context, req gateway.ChatRequest) (gateway.ChatResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.captured = append(s.captured, req)
 	idx := s.calls
 	s.calls++
 	if idx < len(s.replyErr) && s.replyErr[idx] != nil {
@@ -555,7 +557,7 @@ func TestStepNative_HappyPath_Anthropic(t *testing.T) {
 		},
 	}
 	step, err := StepNative(context.Background(), disp, statefulEx, "sess-1",
-		"anthropic/claude-opus-4-6", "click the button", 512)
+		"anthropic/claude-opus-4-6", "click the button", 512, nil)
 	if err != nil {
 		t.Fatalf("StepNative: %v", err)
 	}
@@ -588,7 +590,7 @@ func TestStepNative_HappyPath_OpenAI(t *testing.T) {
 		},
 	}
 	step, err := StepNative(context.Background(), disp, statefulEx, "sess-1",
-		"openai/gpt-4o", "type greeting", 512)
+		"openai/gpt-4o", "type greeting", 512, nil)
 	if err != nil {
 		t.Fatalf("StepNative: %v", err)
 	}
@@ -607,7 +609,7 @@ func TestStepNative_HappyPath_Gemini(t *testing.T) {
 		},
 	}
 	step, err := StepNative(context.Background(), disp, statefulEx, "sess-1",
-		"gemini/gemini-3-flash-preview", "click center", 512)
+		"gemini/gemini-3-flash-preview", "click center", 512, nil)
 	if err != nil {
 		t.Fatalf("StepNative: %v", err)
 	}
@@ -621,7 +623,7 @@ func TestStepNative_UnsupportedProvider(t *testing.T) {
 	disp := &scriptedDispatcher{}
 	ex := &recordingExecutor{reply: scrotReply}
 	_, err := StepNative(context.Background(), disp, ex, "s",
-		"ollama/llama3.2", "goal", 512)
+		"ollama/llama3.2", "goal", 512, nil)
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Errorf("want not supported error, got %v", err)
 	}
@@ -640,7 +642,7 @@ func TestStepNative_NoToolUseBlock(t *testing.T) {
 		},
 	}
 	step, err := StepNative(context.Background(), disp, ex, "s",
-		"anthropic/claude-opus-4-6", "goal", 512)
+		"anthropic/claude-opus-4-6", "goal", 512, nil)
 	if err == nil || !strings.Contains(err.Error(), "no tool_use") {
 		t.Errorf("want no tool_use error, got %v", err)
 	}
@@ -654,7 +656,7 @@ func TestStepNative_ScreenshotFails(t *testing.T) {
 	ex := &recordingExecutor{err: errors.New("scrot exploded")}
 	disp := &scriptedDispatcher{}
 	_, err := StepNative(context.Background(), disp, ex, "s",
-		"anthropic/claude-opus-4-6", "goal", 512)
+		"anthropic/claude-opus-4-6", "goal", 512, nil)
 	if err == nil || !strings.Contains(err.Error(), "screenshot") {
 		t.Errorf("want screenshot error, got %v", err)
 	}
@@ -664,9 +666,141 @@ func TestStepNative_DispatcherFails(t *testing.T) {
 	ex := &recordingExecutor{reply: scrotReply}
 	disp := &scriptedDispatcher{replyErr: []error{errors.New("provider 502")}}
 	_, err := StepNative(context.Background(), disp, ex, "s",
-		"anthropic/claude-opus-4-6", "goal", 512)
+		"anthropic/claude-opus-4-6", "goal", 512, nil)
 	if err == nil || !strings.Contains(err.Error(), "model call") {
 		t.Errorf("want model call error, got %v", err)
+	}
+}
+
+// --- Issue #102: action history + post-dispatch wait ----------------------
+
+func TestFormatPriorAttempts(t *testing.T) {
+	t.Run("empty returns empty string", func(t *testing.T) {
+		if got := formatPriorAttempts(nil); got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+		if got := formatPriorAttempts([]ActionAttempt{}); got != "" {
+			t.Errorf("expected empty, got %q", got)
+		}
+	})
+
+	t.Run("renders click + type with notes", func(t *testing.T) {
+		got := formatPriorAttempts([]ActionAttempt{
+			{Action: Action{Action: "click", X: 376, Y: 69, Reason: "click URL bar"}, Note: "click URL bar"},
+			{Action: Action{Action: "type", Text: "https://example.com"}, Note: "type the URL"},
+		})
+		if !strings.Contains(got, "click(376, 69)") {
+			t.Errorf("missing click description: %q", got)
+		}
+		if !strings.Contains(got, `type("https://example.com")`) {
+			t.Errorf("missing type description: %q", got)
+		}
+		if !strings.Contains(got, "click URL bar") {
+			t.Errorf("missing note: %q", got)
+		}
+		if !strings.Contains(got, "Current desktop state:") {
+			t.Errorf("missing transition phrase: %q", got)
+		}
+	})
+
+	t.Run("truncates long type strings", func(t *testing.T) {
+		long := strings.Repeat("x", 100)
+		got := formatPriorAttempts([]ActionAttempt{
+			{Action: Action{Action: "type", Text: long}},
+		})
+		// Text was 100 chars; we cap at 37 + "..." = 40 inside the
+		// quote marks. The full rendered description should be much
+		// shorter than the raw text.
+		if strings.Contains(got, long) {
+			t.Error("expected long text to be truncated")
+		}
+		if !strings.Contains(got, "...") {
+			t.Errorf("expected truncation marker: %q", got)
+		}
+	})
+}
+
+func TestStep_HistoryEmbeddedInUserMessage(t *testing.T) {
+	disp := &scriptedDispatcher{
+		replies: []gateway.ChatResponse{
+			{Choices: []gateway.Choice{{
+				Index:   0,
+				Message: gateway.Message{Role: "assistant", Content: gateway.TextContent(`{"action":"done","reason":"ok"}`)},
+			}}},
+		},
+	}
+	ex := newScriptedExecutor()
+	prev := []ActionAttempt{
+		{Action: Action{Action: "click", X: 100, Y: 200}, Note: "tried URL bar"},
+		{Action: Action{Action: "click", X: 105, Y: 205}, Note: "tried slightly right"},
+	}
+
+	_, err := Step(context.Background(), disp, ex, "s", "ollama/llama3.2-vision", "focus the URL bar", 256, prev)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(disp.captured) != 1 {
+		t.Fatalf("expected 1 dispatch, got %d", len(disp.captured))
+	}
+
+	// User message should be multipart (text + image). The text part
+	// should contain the rendered prior attempts.
+	user := disp.captured[0].Messages[1]
+	if !user.Content.IsMultipart() {
+		t.Fatalf("user message not multipart: %+v", user.Content)
+	}
+	var combinedText string
+	for _, p := range user.Content.Parts() {
+		if p.Type == gateway.ContentPartText {
+			combinedText += p.Text
+		}
+	}
+	if !strings.Contains(combinedText, "Prior attempts") {
+		t.Errorf("expected prior-attempts prefix in user text, got: %q", combinedText)
+	}
+	if !strings.Contains(combinedText, "click(100, 200)") {
+		t.Errorf("expected first action description, got: %q", combinedText)
+	}
+	if !strings.Contains(combinedText, "click(105, 205)") {
+		t.Errorf("expected second action description, got: %q", combinedText)
+	}
+	if !strings.Contains(combinedText, "tried URL bar") {
+		t.Errorf("expected first note, got: %q", combinedText)
+	}
+	if !strings.Contains(combinedText, "Goal: focus the URL bar") {
+		t.Errorf("expected goal in user text, got: %q", combinedText)
+	}
+}
+
+func TestStep_NoHistoryOnFirstIteration(t *testing.T) {
+	// nil prevActions → user message should just say "Goal: ..." with
+	// no prior-attempts prefix. Iteration 1 stays clean.
+	disp := &scriptedDispatcher{
+		replies: []gateway.ChatResponse{
+			{Choices: []gateway.Choice{{
+				Index:   0,
+				Message: gateway.Message{Role: "assistant", Content: gateway.TextContent(`{"action":"done","reason":"ok"}`)},
+			}}},
+		},
+	}
+	ex := newScriptedExecutor()
+	_, err := Step(context.Background(), disp, ex, "s", "ollama/llama3.2-vision", "find the button", 256, nil)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	user := disp.captured[0].Messages[1]
+	var combinedText string
+	for _, p := range user.Content.Parts() {
+		if p.Type == gateway.ContentPartText {
+			combinedText += p.Text
+		}
+	}
+	if strings.Contains(combinedText, "Prior attempts") {
+		t.Errorf("first-iteration user message should NOT have prior-attempts prefix, got: %q", combinedText)
+	}
+	if !strings.HasPrefix(combinedText, "Goal: ") {
+		t.Errorf("first-iteration user text should start with Goal:, got: %q", combinedText)
 	}
 }
 

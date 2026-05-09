@@ -10,7 +10,7 @@ The "fill in this form" pack. Caller supplies a `fields` map of `{label: value}`
 
 This is the messiest of the three vision packs because the action loop must track per-field progress. Pairs naturally with [`vision.click_anywhere`](./click-anywhere.md) (to submit afterward) and [`vision.extract_visible_text`](./extract-visible-text.md) (to verify the post-submit state).
 
-> ⚠️ **Same known limitation as `vision.click_anywhere`** — see [issue #102](https://github.com/tosin2013/helmdeck/issues/102). The loop doesn't visually verify the typed text actually landed in the right field before moving on. For high-stakes forms, follow with `vision.extract_visible_text` to confirm the field values.
+> 💡 **Per-field self-correction**: each field's loop accumulates its own action history, so the model on iteration N+1 sees what it tried on iteration N. Combined with the 250 ms post-dispatch wait inside `Step`, weak models can recover from "I typed but it landed in the wrong field" without burning the full `max_steps` budget. For high-stakes forms, follow with `vision.extract_visible_text` to confirm the final field values regardless.
 
 ## Setup prerequisite
 

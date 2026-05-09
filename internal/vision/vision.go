@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tosin2013/helmdeck/internal/gateway"
 	"github.com/tosin2013/helmdeck/internal/session"
@@ -85,22 +86,81 @@ func CaptureScreenshot(ctx context.Context, ex session.Executor, sessionID strin
 	return res.Stdout, nil
 }
 
+// ActionAttempt captures one prior turn's emitted action so the next
+// AskModel call can show the model what it tried already. Without
+// this, the model on iteration N+1 has no memory of iteration N's
+// action — it sees only a fresh screenshot and re-emits the same
+// click ad infinitum (issue #102). The Note field is the model's own
+// prose reason for the action, lifted from Action.Reason; useful for
+// the model to recognize "I tried clicking the URL bar at (376,69)
+// already, that didn't work, try (380,75) instead."
+type ActionAttempt struct {
+	Action Action
+	Note   string
+}
+
+// formatPriorAttempts renders prior actions as a text prefix to embed
+// in the user message before the current screenshot. Returns "" when
+// there are no priors so iteration 1 stays clean.
+func formatPriorAttempts(prev []ActionAttempt) string {
+	if len(prev) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Prior attempts (these did NOT achieve the goal — try a different approach if the screenshot below shows the goal still incomplete):\n")
+	for i, a := range prev {
+		fmt.Fprintf(&b, "  %d. %s", i+1, formatActionForHistory(a.Action))
+		if a.Note != "" {
+			fmt.Fprintf(&b, " — %q", a.Note)
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("\nCurrent desktop state:\n")
+	return b.String()
+}
+
+func formatActionForHistory(a Action) string {
+	switch strings.ToLower(a.Action) {
+	case "click":
+		return fmt.Sprintf("click(%d, %d)", a.X, a.Y)
+	case "type":
+		text := a.Text
+		if len(text) > 40 {
+			text = text[:37] + "..."
+		}
+		return fmt.Sprintf("type(%q)", text)
+	case "key":
+		return fmt.Sprintf("key(%q)", a.Keys)
+	case "done", "none", "":
+		return a.Action
+	default:
+		return a.Action
+	}
+}
+
 // AskModel sends one screenshot + goal to the dispatcher and returns
 // the model's raw text response. Callers run ParseAction on the
 // result. The model + max_tokens come from the caller; the system
-// prompt and message shape are fixed.
-func AskModel(ctx context.Context, d Dispatcher, model, goal string, png []byte, maxTokens int) (string, error) {
+// prompt and message shape are fixed. Pass prevActions to thread a
+// history-prefix into the user message so the model can self-correct
+// across turns (issue #102).
+func AskModel(ctx context.Context, d Dispatcher, model, goal string, png []byte, maxTokens int, prevActions []ActionAttempt) (string, error) {
 	if maxTokens <= 0 {
 		maxTokens = 512
 	}
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	priorPrefix := formatPriorAttempts(prevActions)
+	userText := "Goal: " + goal
+	if priorPrefix != "" {
+		userText = priorPrefix + "\n" + userText
+	}
 	req := gateway.ChatRequest{
 		Model:     model,
 		MaxTokens: &maxTokens,
 		Messages: []gateway.Message{
 			{Role: "system", Content: gateway.TextContent(SystemPrompt)},
 			{Role: "user", Content: gateway.MultipartContent(
-				gateway.TextPart("Goal: " + goal),
+				gateway.TextPart(userText),
 				gateway.ImageURLPartFromURL(dataURL),
 			)},
 		},
@@ -177,12 +237,34 @@ type StepResult struct {
 	Screenshot    []byte
 }
 
-func Step(ctx context.Context, d Dispatcher, ex session.Executor, sessionID, model, goal string, maxTokens int) (StepResult, error) {
+// PostDispatchWait is the duration the loop waits between dispatching
+// an action and the next iteration's screenshot. xdotool returns the
+// instant the synthetic event is queued; Xvfb processes it and any
+// downstream paint (Chromium repaint, focus highlight) takes a few
+// frames. Without this wait, the next CaptureScreenshot may run
+// before the post-action state is rendered, leaving the model
+// looking at a stale frame (issue #102). Exposed as a var (not a
+// const) so tests can shorten it.
+var PostDispatchWait = 250 * time.Millisecond
+
+// waitForPaint sleeps PostDispatchWait, honoring context cancellation.
+// Called after a successful side-effect dispatch.
+func waitForPaint(ctx context.Context) {
+	if PostDispatchWait <= 0 {
+		return
+	}
+	select {
+	case <-time.After(PostDispatchWait):
+	case <-ctx.Done():
+	}
+}
+
+func Step(ctx context.Context, d Dispatcher, ex session.Executor, sessionID, model, goal string, maxTokens int, prevActions []ActionAttempt) (StepResult, error) {
 	png, err := CaptureScreenshot(ctx, ex, sessionID)
 	if err != nil {
 		return StepResult{}, fmt.Errorf("screenshot: %w", err)
 	}
-	raw, err := AskModel(ctx, d, model, goal, png, maxTokens)
+	raw, err := AskModel(ctx, d, model, goal, png, maxTokens, prevActions)
 	if err != nil {
 		return StepResult{}, fmt.Errorf("model call: %w", err)
 	}
@@ -195,6 +277,9 @@ func Step(ctx context.Context, d Dispatcher, ex session.Executor, sessionID, mod
 	if derr != nil {
 		return StepResult{Action: action, ModelResponse: raw, Screenshot: png},
 			fmt.Errorf("dispatch action: %w", derr)
+	}
+	if executed {
+		waitForPaint(ctx)
 	}
 	return StepResult{Action: action, Executed: executed, ModelResponse: raw, Screenshot: png}, nil
 }
@@ -415,7 +500,7 @@ const NativeSystemPrompt = `You control a Linux desktop. Use the "computer" tool
 // Returns a wrapped error if the target model doesn't support
 // native tool-use; callers should check SupportsNativeComputerUse
 // first rather than relying on the error.
-func StepNative(ctx context.Context, d Dispatcher, ex session.Executor, sessionID, model, goal string, maxTokens int) (StepResult, error) {
+func StepNative(ctx context.Context, d Dispatcher, ex session.Executor, sessionID, model, goal string, maxTokens int, prevActions []ActionAttempt) (StepResult, error) {
 	tool, ok := BuildComputerUseTool(model)
 	if !ok {
 		return StepResult{}, fmt.Errorf("native computer-use not supported for model %q", model)
@@ -428,6 +513,11 @@ func StepNative(ctx context.Context, d Dispatcher, ex session.Executor, sessionI
 		maxTokens = 1024
 	}
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	priorPrefix := formatPriorAttempts(prevActions)
+	userText := "Goal: " + goal
+	if priorPrefix != "" {
+		userText = priorPrefix + "\n" + userText
+	}
 	req := gateway.ChatRequest{
 		Model:     model,
 		MaxTokens: &maxTokens,
@@ -439,7 +529,7 @@ func StepNative(ctx context.Context, d Dispatcher, ex session.Executor, sessionI
 		Messages: []gateway.Message{
 			{Role: "system", Content: gateway.TextContent(NativeSystemPrompt)},
 			{Role: "user", Content: gateway.MultipartContent(
-				gateway.TextPart("Goal: "+goal),
+				gateway.TextPart(userText),
 				gateway.ImageURLPartFromURL(dataURL),
 			)},
 		},
@@ -502,6 +592,9 @@ func StepNative(ctx context.Context, d Dispatcher, ex session.Executor, sessionI
 			ModelResponse: string(toolUse.ToolInput),
 			Screenshot:    png,
 		}, fmt.Errorf("dispatch: %w", derr)
+	}
+	if executed {
+		waitForPaint(ctx)
 	}
 	return StepResult{
 		Action:        action,

@@ -122,8 +122,17 @@ func visionClickAnywhereHandler(d vision.Dispatcher) packs.HandlerFunc {
 		var finalAction vision.Action
 		stepsRun := 0
 		completed := false
+		// Issue #102: thread prior actions into each Step call so the
+		// model can self-correct across turns (e.g. "I clicked at
+		// (376,69) twice and the URL bar is still not focused — try
+		// (380,75) instead"). Without this, weak models loop emitting
+		// the same action because they have no memory of prior turns.
+		var prev []vision.ActionAttempt
 		for i := 0; i < maxSteps; i++ {
-			step, err := stepFn(ctx, d, ex, ec.Session.ID, in.Model, in.Goal, defaultVisionMaxTokens)
+			if err := ctx.Err(); err != nil {
+				return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
+			}
+			step, err := stepFn(ctx, d, ex, ec.Session.ID, in.Model, in.Goal, defaultVisionMaxTokens, prev)
 			if err != nil {
 				return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
 			}
@@ -140,6 +149,14 @@ func visionClickAnywhereHandler(d vision.Dispatcher) packs.HandlerFunc {
 				// useful to add — bail rather than burn the budget.
 				break
 			}
+			// Accumulate this turn's action for the next iteration's
+			// prior-attempts prefix. "done"/"none" actions don't get
+			// added because we either exited (done) or are about to
+			// re-try (none on first turn).
+			prev = append(prev, vision.ActionAttempt{
+				Action: step.Action,
+				Note:   step.Action.Reason,
+			})
 		}
 		return json.Marshal(map[string]any{
 			"completed":    completed,
@@ -221,7 +238,7 @@ func visionExtractVisibleTextHandler(d vision.Dispatcher) packs.HandlerFunc {
 		// field as the transcription text.
 		raw, err := vision.AskModel(ctx, d, in.Model,
 			"Transcribe all visible text on the screen. Return action=done with reason set to the full transcription, joined with newlines, no commentary.",
-			png, defaultVisionMaxTokens)
+			png, defaultVisionMaxTokens, nil)
 		if err != nil {
 			return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
 		}
@@ -336,11 +353,23 @@ func visionFillFormHandler(d vision.Dispatcher) packs.HandlerFunc {
 			value := in.Fields[name]
 			fieldGoal := fmt.Sprintf("Find the form field labeled %q and type %q into it. Return action=done when the field has been filled.", name, value)
 			fieldDone := false
+			// Issue #102: per-field action history so the model can
+			// self-correct (e.g. "I typed but nothing landed in the
+			// field — try clicking the field first"). Reset per field
+			// because the goal changes each time.
+			var prev []vision.ActionAttempt
 			for i := 0; i < maxSteps; i++ {
-				step, err := vision.Step(ctx, d, ex, ec.Session.ID, in.Model, fieldGoal, defaultVisionMaxTokens)
+				if err := ctx.Err(); err != nil {
+					return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
+				}
+				step, err := vision.Step(ctx, d, ex, ec.Session.ID, in.Model, fieldGoal, defaultVisionMaxTokens, prev)
 				if err != nil {
 					return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
 				}
+				// Parity with VisionClickAnywhere — record per-step
+				// screenshot artifacts so form-fill workflows leave the
+				// same audit trail.
+				recordVisionStep(ctx, ec, step, in.Model, stepsRun)
 				stepsRun++
 				if strings.EqualFold(step.Action.Action, "done") {
 					fieldDone = true
@@ -349,6 +378,10 @@ func visionFillFormHandler(d vision.Dispatcher) packs.HandlerFunc {
 				if stepsRun >= maxSteps {
 					break
 				}
+				prev = append(prev, vision.ActionAttempt{
+					Action: step.Action,
+					Note:   step.Action.Reason,
+				})
 			}
 			if fieldDone {
 				filled = append(filled, name)
