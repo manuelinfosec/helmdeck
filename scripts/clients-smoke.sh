@@ -67,10 +67,17 @@ fi
 # Reuse the same env shape make smoke writes so the compose stack
 # comes up identically.
 SECRET="$(openssl rand -hex 32)"
+# Docker socket GID for compose's group_add substitution. On Ubuntu
+# 24.04 (current GitHub Actions runners) docker.sock is owned by GID
+# 127; older 20.04-era runners used 999; the compose default fallback
+# is 999 which won't work on modern runners. Stat the socket to get
+# the right value at runtime.
+DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)"
 cat > "${ENV_FILE}" <<EOF
 HELMDECK_JWT_SECRET=${SECRET}
 HELMDECK_PORT=${PORT}
 SIDECAR_IMAGE=${SIDECAR_IMAGE}
+HELMDECK_DOCKER_GID=${DOCKER_GID}
 EOF
 
 # compose.yaml's control-plane service has env_file: .env.local for
@@ -90,7 +97,6 @@ HELMDECK_JWT_SECRET=${SECRET}
 HELMDECK_VAULT_KEY=$(openssl rand -hex 32)
 HELMDECK_KEYSTORE_KEY=$(openssl rand -hex 32)
 HELMDECK_ADMIN_PASSWORD=${ADMIN_PASSWORD}
-HELMDECK_DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
 EOF
   CREATED_RUNTIME_ENV=1
 fi
