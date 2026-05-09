@@ -11,6 +11,22 @@ and the hard exit gates for each — see
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-05-09
+
+A patch release that completes helmdeck's listing on the [official MCP Registry](https://registry.modelcontextprotocol.io/). The v0.10.0 attempt failed namespace verification because two pieces of metadata weren't yet declared on the published artifacts — this release adds them. Functionally identical to v0.10.0; no pack/API/binary behavior changes.
+
+### Fixed
+
+- **`@helmdeck/mcp-bridge` npm package** now declares `mcpName: "io.github.tosin2013/helmdeck"` in its `package.json`. The MCP Registry's npm validator reads this field to confirm the package belongs to the registered namespace; without it, registry submission failed with `NPM package '@helmdeck/mcp-bridge' is missing required 'mcpName' field`.
+- **`ghcr.io/tosin2013/helmdeck-mcp` OCI image** now carries the `io.modelcontextprotocol.server.name="io.github.tosin2013/helmdeck"` label. The OCI validator reads this label to confirm namespace ownership; the v0.10.0 image lacked it.
+
+### Operator notes
+
+- **No action required for existing v0.10.0 installs.** The bridge binary, control plane, and all 38 packs are unchanged. Skip this release unless you specifically need the registry-listed install path.
+- **Registry entry goes live on tag push.** [`.github/workflows/mcp-registry.yml`](https://github.com/tosin2013/helmdeck/blob/main/.github/workflows/mcp-registry.yml) auto-fires; verify at `https://registry.modelcontextprotocol.io/servers/io.github.tosin2013/helmdeck`.
+
+---
+
 ## [0.10.0] - 2026-05-09
 
 A "content packs" release. Two new packs land — **`blog.publish`** for posting to Ghost or stuffing markdown/HTML into the artifact store, and **`podcast.generate`** for multi-speaker podcast MP3s via a pluggable TTS engine. The capture pipeline ships in-repo, the upgrade procedure is documented for the first time, and the README now opens with the quantified cost-positioning argument the platform earned by shipping the per-pack reference work. Pack count: **36 → 38**.
