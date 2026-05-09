@@ -2,6 +2,7 @@
   "name": "@helmdeck/mcp-bridge",
   "version": "0.3.0",
   "description": "Stdio MCP bridge that connects Claude Code, Claude Desktop, OpenClaw, and Gemini CLI to a helmdeck control plane.",
+  "mcpName": "io.github.tosin2013/helmdeck",
   "bin": {
     "helmdeck-mcp": "bin/helmdeck-mcp.js"
   },

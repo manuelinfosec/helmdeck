@@ -3,7 +3,7 @@
   "name": "io.github.tosin2013/helmdeck",
   "title": "Helmdeck",
   "description": "38 capability packs (browser, desktop, vision, repo, fs, slides, podcast) for MCP agents.",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "websiteUrl": "https://helmdeck.dev",
   "repository": {
     "url": "https://github.com/tosin2013/helmdeck",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@helmdeck/mcp-bridge",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "transport": {
         "type": "stdio"
       },
@@ -40,7 +40,7 @@
       "registryType": "oci",
       "registryBaseUrl": "https://ghcr.io",
       "identifier": "ghcr.io/tosin2013/helmdeck-mcp",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "transport": {
         "type": "stdio"
       },
