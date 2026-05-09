@@ -18,6 +18,7 @@ const sidebars: SidebarsConfig = {
         'howto/troubleshoot-install',
         'howto/upgrade-helmdeck',
         'howto/register-with-mcp-clients',
+        'howto/watch-agent-via-vnc',
       ],
     },
     {
