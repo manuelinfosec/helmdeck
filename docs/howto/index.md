@@ -13,6 +13,7 @@ Problem-solving recipes. Each guide assumes you already have helmdeck installed 
 - **[Troubleshoot the install](./troubleshoot-install.md)** — symptom-first table for the known sharp edges in the install path: 502 on first session, GHCR pull failures, lost admin password, sidecar build hangs, blank UI panels, accidental `--reset`.
 - **[Upgrade helmdeck](./upgrade-helmdeck.md)** — pre-flight checklist, in-place Compose-stack upgrade (`git pull && make install`), schema-migration handling, post-upgrade validation, and rollback. Previews the Helm/Kubernetes path coming with v1.0.
 - **[Register helmdeck with your MCP client](./register-with-mcp-clients.md)** — one-line install via the official MCP Registry (`io.github.tosin2013/helmdeck`), stdio config snippet for any client, smoke test, and per-client lookup table covering Claude Code, Claude Desktop, OpenClaw, Gemini CLI, Hermes Agent, and Cursor.
+- **[Watch the agent live via noVNC](./watch-agent-via-vnc.md)** — open a browser tab into a running sidecar and watch what the agent sees in real time. Quick-start desktop-mode session creation, three reachability paths (baas-net / port-forward / reverse-proxy with `HELMDECK_VNC_PUBLIC_BASE`), agent-status overlay, and security caveats. Useful for debugging vision packs and verifying desktop packs.
 
 ## Client integrations
 
