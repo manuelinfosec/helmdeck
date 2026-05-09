@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The helmdeck contributors
+
+package builtin
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/tosin2013/helmdeck/internal/packs"
+	"github.com/tosin2013/helmdeck/internal/session"
+	"github.com/tosin2013/helmdeck/internal/store"
+	"github.com/tosin2013/helmdeck/internal/vault"
+)
+
+// podcastTestExecutor stubs the session executor for the podcast
+// handler's ffmpeg + cat pipeline. We don't actually run ffmpeg in
+// unit tests — we just need every Exec call to return success and
+// plausible stdout (bytes for `cat /...`, "5.0" for ffprobe duration).
+type podcastTestExecutor struct {
+	mp3Bytes []byte // returned by `cat /tmp/helmdeck-podcast/final.mp3`
+	calls    []session.ExecRequest
+}
+
+func (e *podcastTestExecutor) Exec(_ context.Context, _ string, req session.ExecRequest) (session.ExecResult, error) {
+	e.calls = append(e.calls, req)
+	if len(req.Cmd) >= 3 && req.Cmd[0] == "sh" && req.Cmd[1] == "-c" {
+		script := req.Cmd[2]
+		switch {
+		case strings.HasPrefix(script, "ffprobe"):
+			return session.ExecResult{Stdout: []byte("5.123\n")}, nil
+		case strings.HasPrefix(script, "dd if=") && strings.Contains(script, "final.mp3"):
+			return session.ExecResult{Stdout: e.mp3Bytes}, nil
+		case strings.HasPrefix(script, "cat ") && strings.Contains(script, "silent-turn.mp3"):
+			return session.ExecResult{Stdout: []byte("\xff\xfb\x90silent")}, nil
+		case strings.HasPrefix(script, "cat ") && strings.Contains(script, ".mp3"):
+			return session.ExecResult{Stdout: []byte("\xff\xfb\x90readback")}, nil
+		default:
+			return session.ExecResult{}, nil
+		}
+	}
+	return session.ExecResult{}, nil
+}
+
+// vaultWithElevenKey returns an in-memory vault store with the
+// elevenlabs-key credential. Pass empty key string to seed without
+// the credential (for silent-fallback tests).
+func vaultWithElevenKey(t *testing.T, key string) *vault.Store {
+	t.Helper()
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	master := make([]byte, 32)
+	v, err := vault.New(db, master)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == "" {
+		return v
+	}
+	rec, err := v.Create(context.Background(), vault.CreateInput{
+		Name:        "elevenlabs-key",
+		Type:        vault.TypeAPIKey,
+		HostPattern: "api.elevenlabs.io",
+		Plaintext:   []byte(key),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Grant(context.Background(), rec.ID, vault.Grant{ActorSubject: "*"}); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// runPodcastGenerate invokes the handler directly with a hand-built
+// ExecutionContext. nil dispatcher means script-mode-only.
+func runPodcastGenerate(t *testing.T, v *vault.Store, ex session.Executor, input string) (json.RawMessage, error) {
+	t.Helper()
+	pack := PodcastGenerate(v, nil, nil)
+	sessionID := "sess-test-podcast"
+	ec := &packs.ExecutionContext{
+		Pack:      pack,
+		Input:     json.RawMessage(input),
+		Artifacts: packs.NewMemoryArtifactStore(),
+		Session:   &session.Session{ID: sessionID},
+		Exec: func(ctx context.Context, req session.ExecRequest) (session.ExecResult, error) {
+			return ex.Exec(ctx, sessionID, req)
+		},
+	}
+	return pack.Handler(context.Background(), ec)
+}
+
+// --- validation tests -----------------------------------------------------
+
+func TestPodcastGenerate_Validation_NoSpeakers(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"script": [{"speaker":"A","text":"hi"}]
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "speakers map is required") {
+		t.Fatalf("expected speakers-required error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_NoMode(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"speakers": {"A": "v1"}
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "must provide one of") {
+		t.Fatalf("expected mode-required error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_MultipleModes(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"speakers": {"A": "v1"},
+		"script":   [{"speaker":"A","text":"hi"}],
+		"prompt":   "do a podcast"
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "exactly one of") {
+		t.Fatalf("expected multiple-modes error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_PromptWithoutModel(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"speakers": {"A": "v1"},
+		"prompt":   "do a podcast"
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "model is required") {
+		t.Fatalf("expected model-required error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_BadTheme(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"speakers": {"A": "v1"},
+		"theme":    "rant",
+		"script":   [{"speaker":"A","text":"hi"}]
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "theme must be one of") {
+		t.Fatalf("expected theme error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_BadEngine(t *testing.T) {
+	_, err := runPodcastGenerate(t, nil, nil, `{
+		"speakers": {"A": "v1"},
+		"engine":   "playht",
+		"script":   [{"speaker":"A","text":"hi"}]
+	}`)
+	if err == nil || !strings.Contains(err.Error(), `engine must be "elevenlabs"`) {
+		t.Fatalf("expected engine error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_Validation_SpeakerNotInMap(t *testing.T) {
+	v := vaultWithElevenKey(t, "")
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90fakefinalmp3")}
+	_, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1"},
+		"script":   [{"speaker":"Carol","text":"who am I"}]
+	}`)
+	if err == nil || !strings.Contains(err.Error(), `not in speakers map`) {
+		t.Fatalf("expected speaker-not-in-map error, got %v", err)
+	}
+}
+
+// --- happy path -----------------------------------------------------------
+
+func TestPodcastGenerate_ScriptMode_HappyPath(t *testing.T) {
+	// No real ElevenLabs server in unit tests, so seed the vault
+	// WITHOUT a key — handler routes to silent-fallback for every
+	// turn (validates the dispatch path + artifact upload). The
+	// "with-real-key" path is exercised by the live integration
+	// test on the running stack.
+	v := vaultWithElevenKey(t, "")
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90finalmp3goeshere")}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1", "Jordan": "v2"},
+		"script": [
+			{"speaker":"Alex","text":"Welcome back."},
+			{"speaker":"Jordan","text":"Today we discuss..."},
+			{"speaker":"Alex","text":"Let's dig in."}
+		],
+		"theme": "deep-dive",
+		"silence_between_turns_ms": 400
+	}`)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		Engine           string            `json:"engine"`
+		AudioArtifactKey string            `json:"audio_artifact_key"`
+		AudioSize        int               `json:"audio_size"`
+		DurationS        float64           `json:"duration_s"`
+		SpeakerCount     int               `json:"speaker_count"`
+		TurnCount        int               `json:"turn_count"`
+		ScriptSource     string            `json:"script_source"`
+		HasNarration     bool              `json:"has_narration"`
+		Theme            string            `json:"theme"`
+		VoicesUsed       map[string]string `json:"voices_used"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Engine != "elevenlabs" {
+		t.Errorf("engine = %q", out.Engine)
+	}
+	if out.HasNarration {
+		t.Errorf("expected has_narration=false (no key), got true")
+	}
+	if out.SpeakerCount != 2 {
+		t.Errorf("speaker_count = %d, want 2", out.SpeakerCount)
+	}
+	if out.TurnCount != 3 {
+		t.Errorf("turn_count = %d, want 3", out.TurnCount)
+	}
+	if out.ScriptSource != "input" {
+		t.Errorf("script_source = %q, want input", out.ScriptSource)
+	}
+	if out.Theme != "deep-dive" {
+		t.Errorf("theme = %q", out.Theme)
+	}
+	if !strings.HasSuffix(out.AudioArtifactKey, ".mp3") {
+		t.Errorf("artifact key %q should end in .mp3", out.AudioArtifactKey)
+	}
+	if out.VoicesUsed["Alex"] != "v1" || out.VoicesUsed["Jordan"] != "v2" {
+		t.Errorf("voices_used = %+v", out.VoicesUsed)
+	}
+}
+
+func TestPodcastGenerate_CoverPromptEmitted(t *testing.T) {
+	v := vaultWithElevenKey(t, "")
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90mp3")}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1"},
+		"script":   [{"speaker":"Alex","text":"Today on the show..."}],
+		"theme":    "solo-essay",
+		"generate_cover_prompt": true
+	}`)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		CoverImagePrompt string `json:"cover_image_prompt"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.CoverImagePrompt == "" {
+		t.Fatal("expected cover_image_prompt to be emitted")
+	}
+	if !strings.Contains(out.CoverImagePrompt, "Alex") {
+		t.Errorf("cover prompt should reference speakers: %q", out.CoverImagePrompt)
+	}
+	if !strings.Contains(out.CoverImagePrompt, "Today on the show") {
+		t.Errorf("cover prompt should reference hook: %q", out.CoverImagePrompt)
+	}
+}
+
+func TestPodcastGenerate_PromptModeWithoutDispatcher(t *testing.T) {
+	v := vaultWithElevenKey(t, "sk_test")
+	ex := &podcastTestExecutor{mp3Bytes: []byte("mp3")}
+	_, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"A": "v1"},
+		"prompt":   "do a podcast",
+		"model":    "openai/gpt-4o-mini"
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "registered without a gateway dispatcher") {
+		t.Fatalf("expected no-dispatcher error, got %v", err)
+	}
+}
+
+func TestPodcastGenerate_SilentFallback_NoKey(t *testing.T) {
+	// vault has no elevenlabs-key → has_narration:false, MP3 still produced
+	v := vaultWithElevenKey(t, "")
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90silentfinal")}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"A": "v1"},
+		"script":   [{"speaker":"A","text":"silence please"}]
+	}`)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		HasNarration bool `json:"has_narration"`
+		AudioSize    int  `json:"audio_size"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.HasNarration {
+		t.Error("expected has_narration=false")
+	}
+	if out.AudioSize == 0 {
+		t.Error("expected non-zero audio_size even in silent fallback")
+	}
+}

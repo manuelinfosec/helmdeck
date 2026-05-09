@@ -471,6 +471,21 @@ func main() {
 		if err := packReg.Register(builtin.BlogPublish(vaultStore, egressGuard, visionDispatcher)); err != nil {
 			logger.Warn("register blog.publish (with dispatcher) failed", "err", err)
 		}
+		// podcast.generate prompt + source_url/source_text modes need
+		// the dispatcher for LLM script generation. Script mode (mode A)
+		// works without the dispatcher; the body-mode-only registration
+		// is below the conditional. Last-wins semantics — same pattern
+		// as blog.publish.
+		if err := packReg.Register(builtin.PodcastGenerate(vaultStore, egressGuard, visionDispatcher)); err != nil {
+			logger.Warn("register podcast.generate (with dispatcher) failed", "err", err)
+		}
+	}
+	// podcast.generate body-mode-only registration: ensures script
+	// mode works in deployments without a gateway. The conditional
+	// re-registration above overrides this when the dispatcher is
+	// configured.
+	if err := packReg.Register(builtin.PodcastGenerate(vaultStore, egressGuard, nil)); err != nil {
+		logger.Warn("register podcast.generate pack failed", "err", err)
 	}
 	if *disableAuth {
 		deps.Issuer = nil
