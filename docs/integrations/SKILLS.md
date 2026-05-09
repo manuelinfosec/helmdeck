@@ -1,6 +1,6 @@
 ---
 title: Agent skills (load into your MCP client prompt)
-description: Drop-in agent guidance for helmdeck's 37 capability packs. Teaches the LLM how to call each pack, retry transient errors, chain workflows, and file bug reports. Load this into your MCP client's system prompt.
+description: Drop-in agent guidance for helmdeck's 38 capability packs. Teaches the LLM how to call each pack, retry transient errors, chain workflows, and file bug reports. Load this into your MCP client's system prompt.
 keywords: [helmdeck, agent skills, MCP, system prompt, OpenClaw, Claude Code, Claude Desktop, Gemini CLI, capability packs, weak models]
 priority: 0.9
 changefreq: weekly
@@ -8,7 +8,7 @@ changefreq: weekly
 
 # Helmdeck Agent Skills
 
-**Load this file into your MCP client's system prompt or agent config.** It teaches the LLM how to use helmdeck's 37 capability packs correctly, retry transient errors, diagnose failures, chain multi-step workflows, and file bug reports.
+**Load this file into your MCP client's system prompt or agent config.** It teaches the LLM how to use helmdeck's 38 capability packs correctly, retry transient errors, diagnose failures, chain multi-step workflows, and file bug reports.
 
 The intent is the same across every client: this file's content must be in the model's context **before** it sees the user's first prompt. The mechanism varies — pick the subsection that matches your client.
 
@@ -83,7 +83,7 @@ Find the client's "system prompt" / "custom instructions" / "agent context" fiel
 
 ## You are connected to helmdeck
 
-Helmdeck is a browser automation and AI capability platform. You have access to 37 tools exposed as MCP tools. Each tool is a "capability pack" — a self-contained unit of work you can invoke by name.
+Helmdeck is a browser automation and AI capability platform. You have access to 38 tools exposed as MCP tools. Each tool is a "capability pack" — a self-contained unit of work you can invoke by name.
 
 ## Pack catalog
 
@@ -122,6 +122,9 @@ Helmdeck is a browser automation and AI capability platform. You have access to 
 
 ### Blog
 - `blog.publish` — Publish a post to a Ghost blog (live Admin API) OR write rendered markdown/HTML to the helmdeck artifact store. Two body modes: pass `body` directly OR pass `prompt+model` and the pack expands the body via the gateway LLM. Two formats: `markdown` (default; rendered via goldmark when Ghost wants HTML) or `html` (passes through). Vault credential `ghost-admin-key` (id:hexsecret) for Ghost destination. Composes naturally with `research.deep` (find sources) → `content.ground` (cite sources in the body) → `blog.publish` (ship it).
+
+### Podcast
+- `podcast.generate` — Multi-speaker (1..N) podcast MP3 from a script, prompt, OR long-form content (URL/text). Speakers are a `{name: voice_id}` map; the same pack handles solo monologue and multi-host dialogue. Five closed-set `theme`s bake in podcast best practices: `interview`, `debate`, `news-roundup`, `deep-dive`, `solo-essay`. Day 1 uses ElevenLabs (vault `elevenlabs-key`); the `engine` field is reserved for future TTS providers. **Critical**: when using prompt or source modes, the agent supplies the speakers map upfront (with voice IDs) — the pack tells the LLM which speaker names to use. `generate_cover_prompt: true` returns an image-gen prompt for cover art the agent can hand to a future image pack. Composes with `research.deep` → `podcast.generate` (theme `news-roundup` or `deep-dive`) for evidence-grounded shows.
 
 ### Repository
 - `repo.fetch` — Clone a git repo into a session. Returns `clone_path`, `session_id`, **and a context envelope** (`tree`, `readme`, `entrypoints`, `signals`) so you can orient immediately without follow-up calls. See "Repo discovery pattern" below.

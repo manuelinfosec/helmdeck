@@ -179,6 +179,11 @@ const sidebars: SidebarsConfig = {
           label: 'blog',
           items: ['reference/packs/blog/publish'],
         },
+        {
+          type: 'category',
+          label: 'podcast',
+          items: ['reference/packs/podcast/generate'],
+        },
       ],
     },
     {
