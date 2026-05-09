@@ -11,6 +11,7 @@ Problem-solving recipes. Each guide assumes you already have helmdeck installed 
 ## Operations
 
 - **[Troubleshoot the install](./troubleshoot-install.md)** — symptom-first table for the known sharp edges in the install path: 502 on first session, GHCR pull failures, lost admin password, sidecar build hangs, blank UI panels, accidental `--reset`.
+- **[Upgrade helmdeck](./upgrade-helmdeck.md)** — pre-flight checklist, in-place Compose-stack upgrade (`git pull && make install`), schema-migration handling, post-upgrade validation, and rollback. Previews the Helm/Kubernetes path coming with v1.0.
 
 ## Client integrations
 
