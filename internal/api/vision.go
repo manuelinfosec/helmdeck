@@ -107,7 +107,9 @@ func visionActHandler(rt session.Runtime, ex session.Executor, dispatcher vision
 			return
 		}
 
-		step, err := vision.Step(r.Context(), dispatcher, ex, sessionID, req.Model, req.Goal, req.MaxTokens)
+		// REST endpoint is single-step (no loop), so no prior-actions
+		// history. Pass nil; the pack-level loops thread real history.
+		step, err := vision.Step(r.Context(), dispatcher, ex, sessionID, req.Model, req.Goal, req.MaxTokens, nil)
 		if err != nil {
 			// Surface a code that hints at which stage failed. The
 			// step error wrapping uses fmt.Errorf with prefixes

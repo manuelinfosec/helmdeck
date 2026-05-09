@@ -200,6 +200,137 @@ func TestVisionFillFormByLabel_RequiresFields(t *testing.T) {
 	}
 }
 
+// --- Issue #102: action history + ctx cancellation + fill_form artifacts ---
+
+// TestVisionClickAnywhere_AccumulatesHistory drives 3 iterations and
+// asserts that the 3rd dispatcher call carries 2 prior attempts in
+// its user-message text. This is the load-bearing change for #102:
+// without history threading, weak models re-emit the same failed
+// click on every turn.
+func TestVisionClickAnywhere_AccumulatesHistory(t *testing.T) {
+	disp := &scriptedDispatcher{replies: []string{
+		`{"action":"click","x":376,"y":69,"reason":"click URL bar"}`,
+		`{"action":"click","x":380,"y":75,"reason":"try slightly right"}`,
+		`{"action":"done","reason":"focused"}`,
+	}}
+	ex := &recordingExecutor{
+		replies: []session.ExecResult{
+			{Stdout: []byte("\x89PNG-iter1")}, // screenshot 1
+			{},                                 // xdotool click 1
+			{Stdout: []byte("\x89PNG-iter2")}, // screenshot 2
+			{},                                 // xdotool click 2
+			{Stdout: []byte("\x89PNG-iter3")}, // screenshot 3
+			// (no click on iter 3 — model emits done)
+		},
+	}
+	eng := newVisionPackEngine(t, ex)
+	res, err := eng.Execute(context.Background(), VisionClickAnywhere(disp),
+		json.RawMessage(`{"goal":"focus the URL bar","model":"ollama/llama3.2-vision","max_steps":5}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	var out struct {
+		Completed bool `json:"completed"`
+		Steps     int  `json:"steps"`
+	}
+	_ = json.Unmarshal(res.Output, &out)
+	if !out.Completed || out.Steps != 3 {
+		t.Errorf("expected completed=true steps=3, got %+v", out)
+	}
+	if disp.calls != 3 {
+		t.Fatalf("expected 3 dispatcher calls, got %d", disp.calls)
+	}
+
+	// First iteration: no history.
+	textOf := func(req gateway.ChatRequest) string {
+		var s string
+		for _, p := range req.Messages[1].Content.Parts() {
+			if p.Type == gateway.ContentPartText {
+				s += p.Text
+			}
+		}
+		return s
+	}
+	if t1 := textOf(disp.captured[0]); strings.Contains(t1, "Prior attempts") {
+		t.Errorf("first iteration should NOT have history, got: %q", t1)
+	}
+	// Second iteration: 1 prior attempt.
+	t2 := textOf(disp.captured[1])
+	if !strings.Contains(t2, "Prior attempts") || !strings.Contains(t2, "click(376, 69)") {
+		t.Errorf("second iteration missing 1st-attempt history, got: %q", t2)
+	}
+	// Third iteration: 2 prior attempts.
+	t3 := textOf(disp.captured[2])
+	if !strings.Contains(t3, "click(376, 69)") || !strings.Contains(t3, "click(380, 75)") {
+		t.Errorf("third iteration missing accumulated history, got: %q", t3)
+	}
+}
+
+// TestVisionClickAnywhere_HonorsContextCancellation verifies that a
+// cancelled context exits the pack-level loop instead of running to
+// max_steps. Without the ctx.Err() check, the loop keeps spinning.
+func TestVisionClickAnywhere_HonorsContextCancellation(t *testing.T) {
+	disp := &scriptedDispatcher{replies: []string{
+		`{"action":"click","x":50,"y":60,"reason":"first"}`,
+		`{"action":"click","x":50,"y":60,"reason":"second"}`,
+		`{"action":"click","x":50,"y":60,"reason":"third"}`,
+	}}
+	ex := &recordingExecutor{
+		replies: []session.ExecResult{
+			{Stdout: []byte("png1")}, {}, // screenshot + click
+			{Stdout: []byte("png2")}, {}, // screenshot + click
+		},
+	}
+	eng := newVisionPackEngine(t, ex)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately so the loop's ctx.Err() check fires on
+	// iteration 1. We don't need timing — we just need the check to
+	// short-circuit before max_steps is reached.
+	cancel()
+
+	pack := VisionClickAnywhere(disp)
+	_, err := eng.Execute(ctx, pack,
+		json.RawMessage(`{"goal":"click","model":"ollama/llama3.2-vision","max_steps":50}`))
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+	if !strings.Contains(err.Error(), "canceled") && !strings.Contains(err.Error(), "context") {
+		t.Errorf("expected context-cancellation error, got: %v", err)
+	}
+}
+
+// TestVisionFillFormByLabel_RecordsArtifacts verifies the parity fix:
+// fill_form now records per-step screenshots like click_anywhere does.
+// Without this, form-fill workflows leave no audit trail.
+func TestVisionFillFormByLabel_RecordsArtifacts(t *testing.T) {
+	disp := &scriptedDispatcher{replies: []string{
+		`{"action":"done","reason":"name filled"}`,
+	}}
+	ex := &recordingExecutor{
+		replies: []session.ExecResult{
+			{Stdout: []byte("\x89PNG-form-shot")},
+		},
+	}
+	eng := newVisionPackEngine(t, ex)
+	res, err := eng.Execute(context.Background(), VisionFillFormByLabel(disp),
+		json.RawMessage(`{"model":"ollama/llama3.2-vision","fields":{"name":"alice"},"max_steps":2}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(res.Artifacts) == 0 {
+		t.Fatal("expected at least one artifact recorded — fill_form parity with click_anywhere")
+	}
+	first := res.Artifacts[0]
+	if first.Pack != "vision.fill_form_by_label" {
+		t.Errorf("artifact pack = %q, want vision.fill_form_by_label", first.Pack)
+	}
+	if !strings.HasPrefix(first.Key, "vision.fill_form_by_label/") || !strings.Contains(first.Key, "step-") || !strings.HasSuffix(first.Key, ".png") {
+		t.Errorf("unexpected artifact key: %q", first.Key)
+	}
+}
+
 func TestVisionPacksRequireDesktopMode(t *testing.T) {
 	for _, tc := range []struct {
 		name string
