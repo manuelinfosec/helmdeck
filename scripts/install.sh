@@ -242,7 +242,12 @@ preflight() {
   done
   check_tool docker || failed=1
   check_node_version  || failed=1
-  check_go_version    || failed=1
+  # Host Go is only needed when we actually build binaries on the host.
+  # The control-plane Dockerfile builds inside golang:1.26-alpine, so
+  # --no-build can run on a host with older Go (or no Go at all).
+  if [[ "${DO_BUILD}" -eq 1 ]]; then
+    check_go_version  || failed=1
+  fi
 
   # Docker running check is separate because the binary can be
   # installed without the daemon running (common on macOS Docker
