@@ -26,6 +26,12 @@ Helmdeck ships its agent instructions as a native **OpenClaw Skill** at `skills/
    - Either revise the time-stamped prose at the top of the README to reflect the new release, or — if numbers haven't moved meaningfully — leave it but add a "Last verified: vX.Y on YYYY-MM-DD" footer line so readers know the cited workflow is fresh enough.
 
    On a release that does NOT change agent-side performance, the cost numbers are stable enough to skip this step; only update if you'd otherwise be overstating the gap.
+7. **Operator upgrade procedure** — every release MUST be cleanly upgradable from the prior tag without operator data loss or extended downtime. Verify before tagging:
+   - The procedure in [`docs/howto/upgrade-helmdeck.md`](howto/upgrade-helmdeck.md) §"In-place Compose-stack upgrade" runs cleanly against a fresh checkout: `git checkout v<new>; make sidecars; make install` produces a healthy stack
+   - `internal/store/migrations/` has any new migrations needed for new tables/columns. Auto-applied via `store.Open` on next startup (no manual `migrate up` required), but the migration file MUST be additive — no `DROP COLUMN` or `ALTER TABLE … RENAME` that would break a v<new-1> binary trying to read the same DB
+   - If a release introduces a destructive schema change, flag it under `### Breaking` in `CHANGELOG.md` AND link from the upgrade howto's §7 "Version-specific notes" table
+   - Pack-input-schema changes that drop a previously-required field, or change a closed-set value, are also `### Breaking` — agents written against the old schema will error
+   - Post-tag, smoke-test the upgrade against a snapshot of v<new-1>'s `helmdeck.db` (a manual cross-version run; the automated CI smoke is tracked at the Phase 7 audit issue list under "upgrade smoke-test in CI")
 
 **Related:**
 - [OpenClaw upgrade runbook](integrations/openclaw-upgrade-runbook.md) — the operator-facing sync procedure

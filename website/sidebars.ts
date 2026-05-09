@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'howto/troubleshoot-install',
+        'howto/upgrade-helmdeck',
       ],
     },
     {
