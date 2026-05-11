@@ -90,6 +90,8 @@ func PodcastGenerate(v *vault.Store, eg *security.EgressGuard, d vision.Dispatch
 				"silence_between_turns_ms":  "number",
 				"min_turn_duration_s":       "number",
 				"generate_cover_prompt":     "boolean",
+				"cover_image":               "boolean",
+				"cover_image_model":         "string",
 				"credential":                "string",
 				"allow_silent_output":       "boolean",
 				"dry_run":                   "boolean",
@@ -108,9 +110,11 @@ func PodcastGenerate(v *vault.Store, eg *security.EgressGuard, d vision.Dispatch
 				"script_source":      "string",
 				"model_used":         "string",
 				"voices_used":        "object",
-				"has_narration":      "boolean",
-				"theme":              "string",
-				"cover_image_prompt": "string",
+				"has_narration":            "boolean",
+				"theme":                    "string",
+				"cover_image_prompt":       "string",
+				"cover_image_artifact_key": "string",
+				"cover_image_model_used":   "string",
 			},
 		},
 		Handler: podcastGenerateHandler(v, eg, d),
@@ -132,6 +136,8 @@ type podcastGenerateInput struct {
 	SilenceBetweenTurnsMs  int               `json:"silence_between_turns_ms"`
 	MinTurnDurationS       float64           `json:"min_turn_duration_s"`
 	GenerateCoverPrompt    bool              `json:"generate_cover_prompt"`
+	CoverImage             bool              `json:"cover_image"`
+	CoverImageModel        string            `json:"cover_image_model"`
 	Credential             string            `json:"credential"`
 	AllowSilentOutput      bool              `json:"allow_silent_output"`
 	DryRun                 bool              `json:"dry_run"`
@@ -426,8 +432,38 @@ func podcastGenerateHandler(v *vault.Store, eg *security.EgressGuard, d vision.D
 		if modelUsed != "" {
 			out["model_used"] = modelUsed
 		}
+		// Cover prompt is computed once (cheap, in-process) and either
+		// surfaced as `cover_image_prompt` (when generate_cover_prompt
+		// is set) or used internally to feed image.generate (when
+		// cover_image is set), or both. Default: neither runs.
+		var coverPrompt string
+		if in.GenerateCoverPrompt || in.CoverImage {
+			coverPrompt = podcast.CoverPromptForScript(podcast.Theme(theme), voicesUsed, script)
+		}
 		if in.GenerateCoverPrompt {
-			out["cover_image_prompt"] = podcast.CoverPromptForScript(podcast.Theme(theme), voicesUsed, script)
+			out["cover_image_prompt"] = coverPrompt
+		}
+		if in.CoverImage {
+			// Reuses the shared #146 entrypoint RunImageGen — saves a
+			// registry round-trip and a second audit-log entry per
+			// chained call. Artifacts land under ec.Pack.Name
+			// ("podcast.generate") rather than image.generate's
+			// namespace; the chained pack owns its own artifacts.
+			coverModel := in.CoverImageModel
+			if coverModel == "" {
+				// Schnell is the fast/cheap default. Operators wanting
+				// FLUX pro / SDXL / etc. override via `cover_image_model`.
+				coverModel = imageGenDefaultModel
+			}
+			res, perr := RunImageGen(ctx, ec, v, eg, ImageGenRequest{
+				Prompt: coverPrompt,
+				Model:  coverModel,
+			})
+			if perr != nil {
+				return nil, perr
+			}
+			out["cover_image_artifact_key"] = res.ArtifactKeys[0]
+			out["cover_image_model_used"] = res.ModelUsed
 		}
 		return json.Marshal(out)
 	}
