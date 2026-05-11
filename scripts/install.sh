@@ -35,6 +35,9 @@
 #   3   build failed
 #   4   compose up failed / healthcheck never passed
 
+# TODO: Force Docker to build in amd64 (for macos users)
+# export DOCKER_DEFAULT_PLATFORM=linux/amd64
+
 set -euo pipefail
 
 # ────────────────────────────────────────────────────────────────────────
@@ -603,6 +606,8 @@ setup_github_token() {
   else
     warn "failed to store GitHub token (HTTP ${resp}). Add it manually in the Vault panel."
   fi
-}
+} 
+# TODO: Fix issue
+#   ./scripts/install.sh: line 609: resp: unbound variable
 
 main "$@"
