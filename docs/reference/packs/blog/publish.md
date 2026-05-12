@@ -47,9 +47,14 @@ For the `artifact` destination, **no vault credential is needed** — the pack w
 | `published_at` | `string` | with `status="scheduled"` | — | RFC3339 timestamp in the future. |
 | `host` | `string` | with `destination="ghost"` | — | Ghost installation hostname. Accepts `host`, `https://host`, or `http://host:port` (the last for self-hosted Ghost on a non-HTTPS port). |
 | `credential` | `string` | no | `"ghost-admin-key"` | Vault credential name. Override only if you store the key under a non-default name. |
+| `feature_image_artifact_key` | `string` | no | — | Operator-supplied feature image (v0.12.0 #146). Pass an artifact key from a prior pack call — typically `image.generate`, or a chained pack's `cover_image_artifact_key`. For Ghost, the pack uploads the bytes via `/ghost/api/admin/images/upload/` then stamps the returned URL into the post's `feature_image` field. For artifact-mode, the cover lands as a sidecar `<slug>-cover.png` artifact alongside the post body. **Mutually exclusive with `hero_image:true`.** |
+| `hero_image` | `boolean` | no | `false` | Auto-generate the feature image via `image.generate` (v0.12.0 #146). Uses `hero_image_prompt` if set, falling back to the post title. **Mutually exclusive with `feature_image_artifact_key`.** |
+| `hero_image_prompt` | `string` | no | — | Prompt for the auto-generated hero image when `hero_image:true`. Defaults to the post title if omitted. |
+| `hero_image_model` | `string` | no | `"fal-ai/flux/schnell"` | fal.ai model used when `hero_image:true`. Browse choices via the `helmdeck://image-models` MCP resource. |
 
 **Validation:**
 - Exactly one of `body` or (`prompt`+`model`) — providing both or neither errors.
+- Providing both `feature_image_artifact_key` AND `hero_image:true` errors — pick one source for the cover.
 - `status="scheduled"` requires `published_at` in the future.
 - `destination="ghost"` requires `host` and a vault credential.
 
@@ -73,6 +78,7 @@ Ghost-specific:
 | `html_url` | `string` | Same as `url`, for parity with `github.*` packs. |
 | `status` | `string` | Ghost-confirmed status. |
 | `published_at` | `string` | Ghost-assigned RFC3339. |
+| `feature_image_url` | `string` | Ghost-hosted CDN URL of the uploaded cover (present when `feature_image_artifact_key` or `hero_image:true` was set). |
 
 Artifact-specific:
 
@@ -80,6 +86,13 @@ Artifact-specific:
 |---|---|---|
 | `artifact_key` | `string` | `blog.publish/<slug>.{md\|html}`. Resolve via `/api/v1/artifacts/<key>`. |
 | `size` | `number` | Bytes. |
+| `feature_image_artifact_key` | `string` | Sidecar cover artifact (`blog.publish/<slug>-cover.png`) when a feature image was supplied or auto-generated. |
+
+Feature-image fields (both destinations):
+
+| Field | Type | Notes |
+|---|---|---|
+| `hero_image_model_used` | `string` | Only when `hero_image:true`. Echoes the model that actually generated the cover. |
 
 ## Vault credentials needed
 
@@ -206,6 +219,33 @@ The pack calls the gateway LLM with a frozen system prompt that instructs it to 
 | `handler_failed` | Markdown→HTML conversion failed | `markdown→html for Ghost: …` |
 | `handler_failed` | Prompt expansion model returned no choices | `blog.publish prompt expansion: model returned no choices` |
 | `artifact_failed` | Object store write failed | `artifact upload failed: …` |
+
+## Mermaid diagrams in technical posts
+
+`blog.publish` understands ```` ```mermaid ```` fenced blocks in markdown bodies and renders them per output cell:
+
+| destination | format | Behaviour |
+|---|---|---|
+| `artifact` | `markdown` | Fence passes through verbatim. Use this when the artifact lands in a renderer that knows mermaid (Docusaurus, GitHub, MkDocs). |
+| `artifact` | `html`     | Fence → `<pre class="mermaid">…</pre>` via [goldmark-mermaid](https://pkg.go.dev/go.abhg.dev/goldmark/mermaid). One `<script src="…mermaid…">` is injected at end of document; open the artifact in any browser and the diagram renders. |
+| `ghost`    | `markdown` | Same as artifact-html — markdown is rendered to HTML via goldmark before POST. |
+| `ghost`    | `html`     | If the body is HTML, it passes through unchanged. If you provide markdown content in an `html`-format request, the cross-mode path renders it the same way as the row above. |
+
+**Ghost themes and `<script>` tags.** Ghost's HTML sanitiser may strip the injected `<script>` tag depending on the post-rendering pipeline and theme. The most reliable path is to add MermaidJS to your Ghost theme's `default.hbs` (or equivalent) so it loads on every post:
+
+```hbs
+<!-- inside <head> of default.hbs -->
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true });
+</script>
+```
+
+After that the `<pre class="mermaid">` blocks `blog.publish` writes will render as diagrams.
+
+**Prompt-mode nudging.** In prompt mode, the pack's system prompt instructs the model to emit ```` ```mermaid ```` fences when content is genuinely visual (architecture, request flow, sequence interactions, state transitions, decision trees) and to prefer prose otherwise. The model decides per post — there's no flag to force or forbid diagrams.
+
+**Supported diagram kinds.** Anything mermaid supports: `flowchart`/`graph`, `sequenceDiagram`, `stateDiagram-v2`, `classDiagram`, `erDiagram`, `gantt`, `pie`, `mindmap`, etc. The pack does not validate the diagram body — invalid mermaid syntax surfaces at render time in the reader's browser.
 
 ## Session chaining
 

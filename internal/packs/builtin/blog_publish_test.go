@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -190,6 +191,85 @@ func TestBlogPublish_Artifact_MarkdownBodyToHTMLArtifact(t *testing.T) {
 	_ = json.Unmarshal(raw, &out)
 	if !strings.HasSuffix(out.ArtifactKey, ".html") {
 		t.Errorf("artifact_key %q should end in .html", out.ArtifactKey)
+	}
+}
+
+func TestBlogPublish_Artifact_MermaidFenceRendersInHTML(t *testing.T) {
+	// Markdown body with a ```mermaid block, html artifact output. The
+	// goldmark mermaid extender should convert the fence into a
+	// <pre class="mermaid">…</pre> block (NOT a plain code block) and
+	// inject a single MermaidJS <script> tag at end of document.
+	pack := BlogPublish(nil, nil, nil)
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "artifact",
+			"format":      "html",
+			"title":       "Architecture overview",
+			"body":        "# Diagram\n\n` + "```mermaid" + `\ngraph TD; A-->B; B-->C;\n` + "```" + `\n\nSome prose after."
+		}`),
+		Artifacts: packs.NewMemoryArtifactStore(),
+	}
+	raw, err := pack.Handler(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		ArtifactKey string `json:"artifact_key"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	bytes, _, err := ec.Artifacts.Get(context.Background(), out.ArtifactKey)
+	if err != nil {
+		t.Fatalf("artifact get: %v", err)
+	}
+	html := string(bytes)
+	if !strings.Contains(html, `<pre class="mermaid">`) {
+		t.Errorf("expected <pre class=\"mermaid\"> in rendered html; got:\n%s", html)
+	}
+	if strings.Contains(html, `<code class="language-mermaid">`) {
+		t.Errorf("mermaid fence should NOT render as <code class=\"language-mermaid\">; got:\n%s", html)
+	}
+	if !strings.Contains(html, "graph TD; A--&gt;B") && !strings.Contains(html, "graph TD; A-->B") {
+		t.Errorf("mermaid source content missing from rendered html:\n%s", html)
+	}
+	if !strings.Contains(html, "mermaid") || !strings.Contains(html, "<script") {
+		t.Errorf("expected a <script> tag (MermaidJS loader) when mermaid blocks present; got:\n%s", html)
+	}
+}
+
+func TestBlogPublish_Artifact_MarkdownFormatPreservesMermaidFence(t *testing.T) {
+	// Markdown body with a ```mermaid block, markdown artifact output.
+	// Fence MUST pass through verbatim so downstream Markdown renderers
+	// (Docusaurus, GitHub) can render it themselves.
+	pack := BlogPublish(nil, nil, nil)
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "artifact",
+			"format":      "markdown",
+			"title":       "Architecture overview",
+			"body":        "# Diagram\n\n` + "```mermaid" + `\ngraph TD; A-->B;\n` + "```" + `"
+		}`),
+		Artifacts: packs.NewMemoryArtifactStore(),
+	}
+	raw, err := pack.Handler(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		ArtifactKey string `json:"artifact_key"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	bytes, _, err := ec.Artifacts.Get(context.Background(), out.ArtifactKey)
+	if err != nil {
+		t.Fatalf("artifact get: %v", err)
+	}
+	md := string(bytes)
+	if !strings.Contains(md, "```mermaid") {
+		t.Errorf("mermaid fence should pass through verbatim in markdown artifact; got:\n%s", md)
+	}
+	if !strings.Contains(md, "graph TD; A-->B;") {
+		t.Errorf("mermaid source should pass through verbatim; got:\n%s", md)
 	}
 }
 
@@ -449,6 +529,194 @@ func TestBlogPublish_Ghost_BadJWTKeyFormat(t *testing.T) {
 	}`)
 	if err == nil || !strings.Contains(err.Error(), "id>:<secret") {
 		t.Fatalf("expected bad-key-format error, got %v", err)
+	}
+}
+
+// stubGhostMulti routes /images/upload/ and /posts/ to distinct
+// canned responses. Used by the feature-image tests where the pack
+// must POST the image first, then the post body, in that order.
+func stubGhostMulti(t *testing.T, imageURL, postBody string) (*httptest.Server, *[]ghostCapture) {
+	t.Helper()
+	captured := []ghostCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = append(captured, ghostCapture{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Query:  r.URL.RawQuery,
+			Auth:   r.Header.Get("Authorization"),
+			Body:   string(body),
+		})
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/images/upload/"):
+			_, _ = w.Write([]byte(`{"images":[{"url":"` + imageURL + `","ref":null}]}`))
+		case strings.HasSuffix(r.URL.Path, "/posts/"):
+			_, _ = w.Write([]byte(postBody))
+		default:
+			http.Error(w, "unhandled stub path: "+r.URL.Path, 404)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &captured
+}
+
+func TestBlogPublish_Artifact_FeatureImageFromKey(t *testing.T) {
+	// Pre-seed the artifact store with a fake image artifact, pass its
+	// key as feature_image_artifact_key, and assert the pack writes a
+	// sidecar `-cover.png` artifact and surfaces the key in output.
+	pack := BlogPublish(nil, nil, nil)
+	store := packs.NewMemoryArtifactStore()
+	art, err := store.Put(context.Background(), "prior.pack", "src.png", []byte("\x89PNG fake"), "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "artifact",
+			"format":      "markdown",
+			"title":       "Post with cover",
+			"body":        "# Hello",
+			"feature_image_artifact_key": "` + art.Key + `"
+		}`),
+		Artifacts: store,
+	}
+	raw, err := pack.Handler(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		ArtifactKey             string `json:"artifact_key"`
+		FeatureImageArtifactKey string `json:"feature_image_artifact_key"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.FeatureImageArtifactKey == "" {
+		t.Fatal("feature_image_artifact_key should be set")
+	}
+	if !strings.Contains(out.FeatureImageArtifactKey, "-cover.png") {
+		t.Errorf("sidecar cover artifact should have -cover.png suffix; got %q", out.FeatureImageArtifactKey)
+	}
+}
+
+func TestBlogPublish_Artifact_HeroImageAutoGenerated(t *testing.T) {
+	// hero_image:true → RunImageGen via fal stub → sidecar artifact +
+	// hero_image_model_used in output.
+	stubFalAPI(t, "sk_fal", 1)
+	v := vaultWithFalKey(t, "sk_fal")
+	pack := BlogPublish(v, nil, nil)
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "artifact",
+			"format":      "markdown",
+			"title":       "Auto cover",
+			"body":        "# Hello",
+			"hero_image":  true
+		}`),
+		Artifacts: packs.NewMemoryArtifactStore(),
+	}
+	raw, err := pack.Handler(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		FeatureImageArtifactKey string `json:"feature_image_artifact_key"`
+		HeroImageModelUsed      string `json:"hero_image_model_used"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.FeatureImageArtifactKey == "" {
+		t.Error("expected feature_image_artifact_key on hero_image:true")
+	}
+	if out.HeroImageModelUsed != imageGenDefaultModel {
+		t.Errorf("hero_image_model_used = %q, want %q", out.HeroImageModelUsed, imageGenDefaultModel)
+	}
+}
+
+func TestBlogPublish_FeatureImage_BothInputsRejected(t *testing.T) {
+	// feature_image_artifact_key + hero_image:true is mutually exclusive.
+	pack := BlogPublish(nil, nil, nil)
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "artifact",
+			"format":      "markdown",
+			"title":       "x",
+			"body":        "y",
+			"feature_image_artifact_key": "anything",
+			"hero_image":  true
+		}`),
+		Artifacts: packs.NewMemoryArtifactStore(),
+	}
+	_, err := pack.Handler(context.Background(), ec)
+	var perr *packs.PackError
+	if !errors.As(err, &perr) || perr.Code != packs.CodeInvalidInput {
+		t.Fatalf("expected CodeInvalidInput, got %v", err)
+	}
+	if !strings.Contains(perr.Message, "not both") {
+		t.Errorf("error message should mention mutual exclusion, got %q", perr.Message)
+	}
+}
+
+func TestBlogPublish_Ghost_FeatureImageUploadedBeforePost(t *testing.T) {
+	// Ghost destination: stub /images/upload/ returning a fake hosted
+	// URL, stub /posts/ returning a post. Assert (a) image upload
+	// happens FIRST, (b) post body contains feature_image: <hosted-url>,
+	// (c) output includes feature_image_url and feature_image_artifact_key.
+	srv, captured := stubGhostMulti(t,
+		"https://cdn.blog.example/content/images/2026/05/feature.png",
+		`{"posts":[{"id":"post-id-456","url":"https://blog.example/p/post/","status":"draft","published_at":null}]}`)
+	_, _, key := validGhostKey()
+	v := vaultWithGhostKey(t, "ghost-admin-key", "blog.example", key)
+	// Pre-seed an image artifact to point feature_image_artifact_key at.
+	store := packs.NewMemoryArtifactStore()
+	art, _ := store.Put(context.Background(), "prior.pack", "cover.png", []byte("\x89PNGfakebytes"), "image/png")
+
+	pack := BlogPublish(v, nil, nil)
+	host := strings.TrimPrefix(srv.URL, "http://")
+	ec := &packs.ExecutionContext{
+		Pack: pack,
+		Input: json.RawMessage(`{
+			"destination": "ghost",
+			"format":      "markdown",
+			"title":       "Featured post",
+			"body":        "# Body",
+			"host":        "http://` + host + `",
+			"feature_image_artifact_key": "` + art.Key + `"
+		}`),
+		Artifacts: store,
+	}
+	raw, err := pack.Handler(context.Background(), ec)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if len(*captured) != 2 {
+		t.Fatalf("expected 2 ghost calls (image upload + post), got %d", len(*captured))
+	}
+	// First call must be the image upload.
+	if !strings.HasSuffix((*captured)[0].Path, "/images/upload/") {
+		t.Errorf("first ghost call should be image upload, got path %q", (*captured)[0].Path)
+	}
+	if !strings.HasSuffix((*captured)[1].Path, "/posts/") {
+		t.Errorf("second ghost call should be post, got path %q", (*captured)[1].Path)
+	}
+	if !strings.Contains((*captured)[1].Body, `"feature_image":"https://cdn.blog.example/content/images/2026/05/feature.png"`) {
+		t.Errorf("post body should contain feature_image with hosted URL, got: %s", (*captured)[1].Body)
+	}
+	var out struct {
+		PostID                  string `json:"post_id"`
+		FeatureImageURL         string `json:"feature_image_url"`
+		FeatureImageArtifactKey string `json:"feature_image_artifact_key"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.PostID != "post-id-456" {
+		t.Errorf("post_id = %q, want post-id-456", out.PostID)
+	}
+	if out.FeatureImageURL != "https://cdn.blog.example/content/images/2026/05/feature.png" {
+		t.Errorf("feature_image_url = %q", out.FeatureImageURL)
+	}
+	if out.FeatureImageArtifactKey != art.Key {
+		t.Errorf("feature_image_artifact_key = %q, want %q", out.FeatureImageArtifactKey, art.Key)
 	}
 }
 

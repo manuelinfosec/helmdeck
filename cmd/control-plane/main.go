@@ -353,7 +353,7 @@ func main() {
 	if err := packReg.Register(builtin.ScrapeSPA()); err != nil {
 		logger.Warn("register scrape_spa pack failed", "err", err)
 	}
-	if err := packReg.Register(builtin.SlidesRender()); err != nil {
+	if err := packReg.Register(builtin.SlidesRender(vaultStore, egressGuard)); err != nil {
 		logger.Warn("register slides_render pack failed", "err", err)
 	}
 	if err := packReg.Register(builtin.DesktopRunAppAndScreenshot()); err != nil {
@@ -489,7 +489,7 @@ func main() {
 			// MP4 video via ElevenLabs TTS + ffmpeg + YouTube metadata
 			// via gateway LLM. Vault-stored ElevenLabs API key; degrades
 			// to silent video when key is missing.
-			builtin.SlidesNarrate(visionDispatcher, vaultStore),
+			builtin.SlidesNarrate(visionDispatcher, vaultStore, egressGuard),
 		} {
 			if err := packReg.Register(p); err != nil {
 				logger.Warn("register vision pack failed", "pack", p.Name, "err", err)
@@ -518,6 +518,19 @@ func main() {
 	if err := packReg.Register(builtin.PodcastGenerate(vaultStore, egressGuard, nil)); err != nil {
 		logger.Warn("register podcast.generate pack failed", "err", err)
 	}
+
+	// Operator-supplied command packs (T811 MVP). Drop executables
+	// into $HELMDECK_COMMAND_PACKS_DIR and the control plane
+	// registers each as `cmd.<basename>`. Schemas are passthrough
+	// today; a manifest format with typed schemas ships in v0.13.0.
+	if dir := os.Getenv("HELMDECK_COMMAND_PACKS_DIR"); dir != "" {
+		for _, p := range builtin.LoadCommandPacks(ctx, logger, dir) {
+			if err := packReg.Register(p); err != nil {
+				logger.Warn("register command pack failed", "name", p.Name, "err", err)
+			}
+		}
+	}
+
 	if *disableAuth {
 		deps.Issuer = nil
 		logger.Warn("auth disabled by flag; /api/v1/* is unprotected (DEV ONLY)")

@@ -297,6 +297,120 @@ func TestPodcastGenerate_CoverPromptEmitted(t *testing.T) {
 	}
 }
 
+func TestPodcastGenerate_CoverImageGenerated(t *testing.T) {
+	// cover_image:true triggers RunImageGen internally. We stub fal.ai
+	// at the package var ImageGenFalBaseURL and seed the vault with
+	// both the elevenlabs-key (so TTS resolution doesn't trip) and the
+	// fal-key (so cover gen has credentials). allow_silent_output is
+	// also set so we don't need real ElevenLabs bytes flowing.
+	stubFalAPI(t, "sk_fal", 1)
+	v := vaultWithElevenKey(t, "")
+	rec, err := v.Create(context.Background(), vault.CreateInput{
+		Name:        "fal-key",
+		Type:        vault.TypeAPIKey,
+		HostPattern: "fal.run",
+		Plaintext:   []byte("sk_fal"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Grant(context.Background(), rec.ID, vault.Grant{ActorSubject: "*"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90mp3")}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1"},
+		"script":   [{"speaker":"Alex","text":"Today on the show..."}],
+		"theme":    "solo-essay",
+		"cover_image": true,
+		"allow_silent_output": true
+	}`)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		CoverImageArtifactKey string `json:"cover_image_artifact_key"`
+		CoverImageModelUsed   string `json:"cover_image_model_used"`
+		CoverImagePrompt      string `json:"cover_image_prompt"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.CoverImageArtifactKey == "" {
+		t.Fatal("expected cover_image_artifact_key to be set")
+	}
+	if !strings.HasPrefix(out.CoverImageArtifactKey, "podcast.generate/") {
+		t.Errorf("artifact should be namespaced under podcast.generate, got %q", out.CoverImageArtifactKey)
+	}
+	if out.CoverImageModelUsed != imageGenDefaultModel {
+		t.Errorf("model_used = %q, want %q", out.CoverImageModelUsed, imageGenDefaultModel)
+	}
+	// generate_cover_prompt was NOT set, so the prompt should NOT be
+	// surfaced even though it was computed internally.
+	if out.CoverImagePrompt != "" {
+		t.Errorf("cover_image_prompt should be empty unless generate_cover_prompt:true; got %q", out.CoverImagePrompt)
+	}
+}
+
+func TestPodcastGenerate_CoverImageRespectsExplicitModel(t *testing.T) {
+	// cover_image_model override goes through to RunImageGen.
+	stubFalAPI(t, "sk_fal", 1)
+	v := vaultWithElevenKey(t, "")
+	rec, _ := v.Create(context.Background(), vault.CreateInput{
+		Name: "fal-key", Type: vault.TypeAPIKey, HostPattern: "fal.run",
+		Plaintext: []byte("sk_fal"),
+	})
+	_ = v.Grant(context.Background(), rec.ID, vault.Grant{ActorSubject: "*"})
+
+	ex := &podcastTestExecutor{mp3Bytes: []byte("\xff\xfb\x90mp3")}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1"},
+		"script":   [{"speaker":"Alex","text":"Hi."}],
+		"theme":    "solo-essay",
+		"cover_image": true,
+		"cover_image_model": "fal-ai/flux/dev",
+		"allow_silent_output": true
+	}`)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	var out struct {
+		CoverImageModelUsed string `json:"cover_image_model_used"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.CoverImageModelUsed != "fal-ai/flux/dev" {
+		t.Errorf("model_used = %q, want fal-ai/flux/dev", out.CoverImageModelUsed)
+	}
+}
+
+func TestPodcastGenerate_DryRunSkipsCoverImage(t *testing.T) {
+	// dry_run short-circuits BEFORE the cover-image path. Even with
+	// cover_image:true, no fal.ai call should happen (we set no fal
+	// stub — any HTTP attempt would fail loudly).
+	v := vaultWithElevenKey(t, "")
+	ex := &podcastTestExecutor{}
+	raw, err := runPodcastGenerate(t, v, ex, `{
+		"speakers": {"Alex": "v1"},
+		"script":   [{"speaker":"Alex","text":"Hi."}],
+		"theme":    "solo-essay",
+		"cover_image": true,
+		"dry_run": true
+	}`)
+	if err != nil {
+		t.Fatalf("dry_run + cover_image should succeed without fal credentials: %v", err)
+	}
+	var out struct {
+		DryRun                bool   `json:"dry_run"`
+		CoverImageArtifactKey string `json:"cover_image_artifact_key"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if !out.DryRun {
+		t.Error("dry_run should be true in response")
+	}
+	if out.CoverImageArtifactKey != "" {
+		t.Errorf("dry_run must not generate a cover image; got %q", out.CoverImageArtifactKey)
+	}
+}
+
 func TestPodcastGenerate_PromptModeWithoutDispatcher(t *testing.T) {
 	v := vaultWithElevenKey(t, "sk_test")
 	ex := &podcastTestExecutor{mp3Bytes: []byte("mp3")}
