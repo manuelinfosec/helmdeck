@@ -437,7 +437,7 @@ The auto-publish workflow republishes the listing on `v*` tag push. Watch for th
 - **T812** — `helmdeck pack install/uninstall` CLI commands + `POST /api/v1/marketplace/install` REST endpoint. Hot-load (no restart).
 - **T813** — Marketplace UI panel at `/marketplace`. Browse-by-category, search, pack detail, install/uninstall, trust badges (Core / Signed / Unsigned).
 - **T814** — Community marketplace repo (`tosin2013/helmdeck-marketplace`) seeded with the worked-example pack from v0.10 + initial catalog from accepted `pack-candidate` issues.
-- **`hyperframes.render` built-in pack.** New media-output pack that renders an HTML/CSS/JS composition into a deterministic MP4 via Chromium BeginFrame + FFmpeg inside a dedicated `helmdeck-sidecar-hyperframes` image. Audio is optional — silent animations, pre-mixed audio, and chained `podcast.generate` → `hyperframes.render` workflows all work without handler branching. Short-form only (≤12 min at 1080p, 512 MiB artifact cap); long-form streaming defers to the v1.x artifact-streaming track. Pack count 39 → 40.
+- **`hyperframes.render` built-in pack ([#200](https://github.com/tosin2013/helmdeck/issues/200)).** New media-output pack that renders an HTML/CSS/JS composition into a deterministic MP4 via Chromium BeginFrame + FFmpeg inside a dedicated `helmdeck-sidecar-hyperframes` image. Audio is optional — silent animations, pre-mixed audio, and chained `podcast.generate` → `hyperframes.render` workflows all work without handler branching. Short-form only (≤12 min at 1080p, 512 MiB artifact cap); long-form streaming defers to the v1.x artifact-streaming track ([#201](https://github.com/tosin2013/helmdeck/issues/201)). Pack count 39 → 40.
 
 ### Audience
 
@@ -509,7 +509,7 @@ Released as feature-gated minors as they stabilize. No hard sequence.
 | v1.7 | Firecracker production hardening (bare-metal node guidance) | 011 |
 | v1.x | Lightpanda alternate browser engine | 001 |
 | v1.x | **NVIDIA OpenShell integration** — sidecars in MicroVMs + L7 policy | 011, 036 (planned) |
-| v1.x | **Long-form artifact streaming** — `ArtifactStore.PutStream` for multi-GB MP4/audio outputs (unblocks `hyperframes.render` long-form, podcast videos 30–60 min) | 037 (planned) |
+| v1.x | **Long-form artifact streaming** ([#201](https://github.com/tosin2013/helmdeck/issues/201)) — `ArtifactStore.PutStream` for multi-GB MP4/audio outputs (unblocks `hyperframes.render` long-form, podcast videos 30–60 min) | 037 (planned) |
 
 ## v1.x — Enterprise integration tracks {#enterprise-integration-tracks}
 
