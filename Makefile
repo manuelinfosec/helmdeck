@@ -27,6 +27,11 @@ $(BRIDGE): $(shell find cmd/helmdeck-mcp -name '*.go' 2>/dev/null) go.mod
 
 .PHONY: test
 test: ## Run unit tests
+	@command -v ctags >/dev/null 2>&1 && ctags --version 2>&1 | grep -qi "universal" || \
+	  { echo "error: universal-ctags required for repo-map tests"; \
+	    echo "  mac:    brew install universal-ctags"; \
+	    echo "  debian: sudo apt-get install universal-ctags"; \
+	    exit 1; }
 	$(GO) test -race -count=1 ./...
 
 .PHONY: vet
@@ -88,8 +93,20 @@ sidecar-node-build: sidecar-build ## Build the Node.js language sidecar (depends
 		--build-arg BASE_IMAGE=helmdeck-sidecar:dev \
 		-t helmdeck-sidecar-node:dev .
 
+.PHONY: sidecar-hyperframes-build
+sidecar-hyperframes-build: sidecar-build ## Build the HyperFrames sidecar (HTML→MP4 via Chromium BeginFrame + ffmpeg)
+	docker build -f deploy/docker/sidecar-hyperframes.Dockerfile \
+		--build-arg BASE_IMAGE=helmdeck-sidecar:dev \
+		-t helmdeck-sidecar-hyperframes:dev .
+
+.PHONY: sidecar-marketplace-build
+sidecar-marketplace-build: sidecar-build ## Build the Marketplace sidecar (default runtime for community command-handler packs)
+	docker build -f deploy/docker/sidecar-marketplace.Dockerfile \
+		--build-arg BASE_IMAGE=helmdeck-sidecar:dev \
+		-t helmdeck-sidecar-marketplace:dev .
+
 .PHONY: sidecars
-sidecars: sidecar-build sidecar-python-build sidecar-node-build ## Build every sidecar image (base + every language)
+sidecars: sidecar-build sidecar-python-build sidecar-node-build sidecar-hyperframes-build sidecar-marketplace-build ## Build every sidecar image (base + every language + hyperframes + marketplace)
 
 .PHONY: sidecar-smoke
 sidecar-smoke: sidecar-build ## Run the sidecar headless and curl /json/version

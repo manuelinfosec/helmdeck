@@ -347,6 +347,39 @@ The auto-publish workflow (`.github/workflows/mcp-registry.yml`) republishes the
 
 ---
 
+## v0.12.1 — Release-image hot-patch + v0.12.0 reliability bugs — ✅ Shipped 2026-05-13 {#v0121}
+
+**Theme:** "Same-day hot-patch for what v0.12.0 missed."
+
+Four bugs landed within hours of v0.12.0 shipping. The dominant one (#180) is a release-image regression — every fresh `docker pull` user saw a blank UI. The other three are smaller reliability fixes around the firecrawl overlay and the `content.ground` pack. All four landed as separate small PRs (#186–189) so each is independently revertible if a regression surfaces. Bundled into v0.12.1 the same day. Planning artefact: `/root/.claude/plans/i-would-like-to-elegant-kahan.md`.
+
+### Shipped
+
+- **#180 — release workflow now runs `npm run build` before docker image build.** The dominant fix. `web/dist/assets/` is gitignored; CI workflow was building the docker image without ever bundling the Vite output, so the image baked in whatever stale `web/dist/index.html` was last committed (referencing asset hashes not present in `web/dist/assets/`). Added Node setup + `cd web && npm ci && npm run build` step to `.github/workflows/release.yml`, plus a verify step that fails the release loud if rebuilt `index.html` references missing assets — defense in depth so this regression can't ship twice.
+- **#181 — firecrawl-rabbitmq healthcheck `start_period: 15s` → `60s`.** RabbitMQ's Erlang VM + mnesia init takes 30-60s on alpine cold-boot. Shorter window exhausted retries before health was achievable → container reported unhealthy → `helmdeck-firecrawl` (correctly waiting via `depends_on: condition: service_healthy`) never started → operator had to `docker compose up` again. Aligned with `firecrawl-searxng`'s 60s precedent in the same file.
+- **#179 — `content.ground` configurable completion-token cap.** Hard-coded 1024 was too tight for the structured claim-plan JSON (system prompt + topic + 5-8 claim entries ≈ 750 tokens, leaving ~270 of headroom; weak models or large posts blew through it → `CodeHandlerFailed: claim extractor returned unparseable JSON`). Default bumped 1024 → 2048; new optional `max_completion_tokens` input lets operators raise the cap up to 8192. Over-cap rejects with `CodeInvalidInput`.
+- **#182 — `content.ground` fails loud when Firecrawl is unreachable.** Per-claim grounding loop was swallowing `callFirecrawlSearch` transport errors silently, producing empty-success "no sources found" output. Now tracks `firecrawlCalls` vs `firecrawlErrors` separately; when 100% of attempted calls hit transport errors → `CodeHandlerFailed` with a Firecrawl-reachability message. Partial-success runs preserved.
+
+### Hard exit gates (all met)
+
+- ✅ `go test ./internal/packs/builtin/... -run ContentGround` green (5 new tests)
+- ✅ `make smoke` regression-protect v0.12.0
+- ✅ `docker pull ghcr.io/tosin2013/helmdeck:0.12.1` shows assets matching index.html
+- ✅ MCP-Registry chained publish (PR #177 workflow_run trigger) — validated this release
+- ✅ npm `@helmdeck/mcp-bridge@0.12.1` published with provenance
+
+### Not in v0.12.1 (deferred)
+
+- **#183 audit-table columns** (`job_id`, `finish_reason`, `raw_content_len`) — migration + write-path changes; v0.13.0.
+- **#173 / #174** — community good-first-issues, kept open for external contributors.
+
+### Concurrent docs/SEO change
+
+- **#184 — SKILL.md catalog refresh.** Pack count 36 → 39 (added `blog.publish`, `podcast.generate`, `image.generate` which had never been documented in SKILL.md). `helmdeckVersion` frontmatter from `24bd0c3` → `v0.12.0`. Shipped as PR #190, not part of the v0.12.1 patch bundle.
+- **SEO sitemap trim.** Dropped `/blog/tags/*`, `/blog/archive`, `/blog/authors` from the Docusaurus sitemap (137 URLs → 122) after Google Search Console reported 61 URLs in "Discovered – currently not indexed" with crawl timestamp `1969-12-31`. Shipped as PR #185.
+
+---
+
 ## v0.12.0 — Content-pack image chaining + v1.0 install-path unblocker + pack-authoring MVP — ✅ Shipped 2026-05-12 {#v0120}
 
 **Theme:** "Covers come for free, the install path becomes Kubernetes-ready, and pack-authoring grows up."
@@ -391,23 +424,53 @@ The auto-publish workflow republishes the listing on `v*` tag push. Watch for th
 
 ---
 
-## v0.13.0 — Marketplace beta (planned, was v0.12.0) {#v0130}
+## v0.13.0 — Marketplace beta — ✅ Shipped 2026-05-15 {#v0130}
 
 **Theme:** "Discover and install community packs."
 
-### Ships (planned)
+### Shipped
 
-- **T810** — Pack marketplace registry model. `index.yaml` catalog schema, `helmdeck-pack.yaml` manifest, cosign trust verification, `HELMDECK_MARKETPLACE_URL` env var, catalog refresh endpoint.
-- **T811-followup — subprocess pack manifest format ([#173](https://github.com/tosin2013/helmdeck/issues/173)).** YAML/JSON sidecar manifest declares typed `input_schema`/`output_schema`, version, author, env, timeout. The v0.12.0 MVP shipped passthrough schemas only; this completes the authoring surface.
-- **T811-followup — subprocess egress sandbox ([#174](https://github.com/tosin2013/helmdeck/issues/174)).** Today subprocess egress is the host environment's responsibility (helmdeck's `EgressGuard` only intercepts in-process HTTP). Proxy-mode confinement closes the gap for the 90% case.
-- **T606a-followup — schema-derived test-runner form.** Replaces the v0.12.0 MVP textarea with a real React form rendered from the pack's `BasicSchema`. Dropdowns for closed-set fields, client-side required-fields validation, typed inputs.
-- **T812** — `helmdeck pack install/uninstall` CLI commands + `POST /api/v1/marketplace/install` REST endpoint. Hot-load (no restart).
-- **T813** — Marketplace UI panel at `/marketplace`. Browse-by-category, search, pack detail, install/uninstall, trust badges (Core / Signed / Unsigned).
-- **T814** — Community marketplace repo (`tosin2013/helmdeck-marketplace`) seeded with the worked-example pack from v0.10 + initial catalog from accepted `pack-candidate` issues.
+**Marketplace track (the headline):**
+
+- **T810 catalog endpoint ([#219](https://github.com/tosin2013/helmdeck/pull/219))** — `GET /api/v1/marketplace/catalog` + `POST /api/v1/marketplace/refresh`. Fetches `index.yaml` from `HELMDECK_MARKETPLACE_URL` (default `https://github.com/tosin2013/helmdeck-marketplace`) at boot; failed refresh preserves the previously-cached snapshot. Three URL shapes supported: `github.com/<owner>/<repo>`, direct raw URLs, `file:///` for air-gapped operators. `HELMDECK_MARKETPLACE_DISABLE=1` opts out.
+- **T812 install/uninstall REST ([#220](https://github.com/tosin2013/helmdeck/pull/220))** — `POST /api/v1/marketplace/{install,uninstall}` + `GET /api/v1/marketplace/installed`. Hot-load: `git clone --depth=1 --filter=blob:none` the marketplace repo, copy `packs/<name>/` to `HELMDECK_PACKS_DIR`, register with the live `packs.Registry` — pack appears in `tools/list` immediately. `command`-handler packs only in beta; `builtin`/`composite`/`wasm` reject. Lands [ADR 038](adrs/038-marketplace-pack-execution-via-sidecar.md) — marketplace packs route through a dedicated `helmdeck-sidecar-marketplace` image (bash + jq + curl + python3 + Node 20) rather than the distroless control plane.
+- **T813 `/marketplace` UI panel ([#221](https://github.com/tosin2013/helmdeck/pull/221))** — React panel with browse-by-category chips, free-text search, pack-detail dialog with schema preview + worked examples + trust badge, install/uninstall buttons with automatic `tools/list` cache invalidation, unsigned-pack confirmation per ADR 034. New `GET /api/v1/marketplace/packs/{name}` returns catalog entry + full `helmdeck-pack.yaml` manifest on demand (catalog endpoint deliberately doesn't pre-load every manifest).
+- **Marketplace trust verification stage A ([#222](https://github.com/tosin2013/helmdeck/pull/222))** — replaces PR #220's structured stub with real deterministic SHA256 content-hash verification. Excludes `helmdeck-pack.yaml` from the hash (chicken-and-egg). Hard-rejects install on mismatch (removes materialized files). Stage B (full sigstore keyless cosign-verify) deferred to v1.0 hardening.
+- **`helmdeck` CLI binary ([#223](https://github.com/tosin2013/helmdeck/pull/223))** — operator-facing CLI wrapping the marketplace endpoints: `pack list`, `pack marketplace [--refresh]`, `pack install <name>`, `pack uninstall <name>`, `pack installed`. Same env-var conventions as `helmdeck-mcp` (`HELMDECK_URL` + `HELMDECK_TOKEN`). `--json` for shell pipelines. Ships via goreleaser alongside `control-plane` + `helmdeck-mcp`. See [`docs/howto/use-the-helmdeck-cli.md`](howto/use-the-helmdeck-cli.md).
+- **T814 community marketplace repo** — [`tosin2013/helmdeck-marketplace`](https://github.com/tosin2013/helmdeck-marketplace) seeded with three packs (`cmd.upper`, `ai.review`, `gif.make`) + maintainer-run `scripts/populate-trust-hashes.mjs` + CI `validate.yml` + `sign.yml`-with-`--check` gate.
+
+**New built-in packs:**
+
+- **`hyperframes.render` ([#200](https://github.com/tosin2013/helmdeck/issues/200))** — HTML/CSS/JS composition → deterministic MP4 via Chromium BeginFrame + ffmpeg using upstream [`hyperframes`](https://github.com/heygen-com/hyperframes) CLI in the new `helmdeck-sidecar-hyperframes` image. Composable sizing: `resolution` (`1080p`/`4k`) × `aspect_ratio` (`16:9`/`9:16`/`1:1`) resolves to one of six upstream presets. Mode-free audio: silent compositions produce silent MP4s; `<audio src>` produces narrated MP4s — chain `podcast.generate` → `hyperframes.render` by embedding the podcast's presigned URL. Short-form only (≤12 min, 512 MiB cap). Pack count 39 → 40.
+- **`stock.search` ([#218](https://github.com/tosin2013/helmdeck/pull/218))** — Pexels-backed stock photo search; downloads top 1-4 results into the artifact store with per-photo attribution metadata. Same chained-input contract as `image.generate` — drops straight into `slides.render`/`slides.narrate`/`blog.publish`/`podcast.generate`/`hyperframes.render`. Engine-pluggable; `unsplash`/`pixabay` reserved for community PRs. Pack count 40 → 41.
+
+**Quality + diagnostics:**
+
+- **`slides.render` contrast guardrails ([#216](https://github.com/tosin2013/helmdeck/pull/216), closes [#202](https://github.com/tosin2013/helmdeck/issues/202))** — three-pronged fix: docs + agent skill teaching WCAG-AA 4.5:1; static contrast lint surfacing `section-background-without-nested-overrides` + `wcag-aa-text-contrast` warnings in the response; two curated embedded Marp themes (`helmdeck-dark`, `helmdeck-corporate`) declaring WCAG-AA colors for every nested element.
+- **`provider_calls` diagnostic columns ([#183](https://github.com/tosin2013/helmdeck/issues/183))** — `job_id` (joins gateway audit to the pack-job that triggered the call), `finish_reason`, `raw_content_len`. Migration `0005_provider_calls_diagnostics.sql` via `ALTER TABLE ADD COLUMN` (O(1) metadata-only).
+- **Subprocess pack manifest format ([#173](https://github.com/tosin2013/helmdeck/issues/173))** — operator-supplied command packs declare typed I/O schemas + execution overrides via a sibling `<basename>.helmdeck-pack.yaml`. Completes the v0.12.0 MVP. New how-to: [`docs/howto/build-subprocess-pack.md`](howto/build-subprocess-pack.md).
+- **`blog.publish` artifact-first refactor ([#203](https://github.com/tosin2013/helmdeck/issues/203))** — `destination` is now optional, defaults to `"artifact"`. Ghost-targeted calls also save the body as an artifact by default (`also_save_artifact: false` to opt out). Ghost failures return a partial-success response (`status: "artifact_saved_ghost_failed"` + `ghost_error` + `artifact_key`) instead of losing the expensive prompt-expanded body.
+
+### Architecture decisions captured
+
+- **[ADR 034 — Pack marketplace](adrs/034-pack-marketplace.md)** — catalog + manifest + trust model + handler types. Written ahead of T810/T812/T813 implementation.
+- **[ADR 037 — Upstream package version management](adrs/037-upstream-package-version-management.md)** — exact pins + CLI-surface sentinel + Dependabot. Surfaced by the hyperframes-npm-pin incident; now a project-wide discipline.
+- **[ADR 038 — Marketplace pack execution via sidecar](adrs/038-marketplace-pack-execution-via-sidecar.md)** — control plane is distroless-static; marketplace packs need bash/jq/python/node; therefore packs route through `helmdeck-sidecar-marketplace` via `ec.Exec` rather than in-process `exec.CommandContext`.
+
+### Slipped to v1.x
+
+- **Stage B trust verification** — full sigstore keyless cosign-verify of the signer identity. Captures malicious-author-modifying-the-manifest, which stage A doesn't.
+- **`hyperframes.render` long-form** ([#201](https://github.com/tosin2013/helmdeck/issues/201)) — multi-GB MP4 streaming via `ArtifactStore.PutStream`. Defers to the v1.x artifact-streaming track.
+- **T606a schema-derived test-runner form** — JSON Schema → React form rendering. The v0.12.0 MVP textarea ships in v0.13.0 unchanged; schema-derived form lands later.
+- **Multi-arch `helmdeck-sidecar-marketplace`** — amd64 only at v0.13.0; multi-arch follows the base sidecar's track.
 
 ### Audience
 
 Operators looking for "an existing pack for X" before writing one. Designed to land before K8s so community surface area precedes enterprise surface area.
+
+### MCP Registry
+
+The auto-publish workflow republishes the listing on `v*` tag push. After tagging, verify at `https://registry.modelcontextprotocol.io/v0/servers?search=io.github.tosin2013%2Fhelmdeck` (expect `version: 0.13.0`, `isLatest: true`).
 
 ---
 
@@ -474,6 +537,31 @@ Released as feature-gated minors as they stabilize. No hard sequence.
 | v1.6 | Pre-packaged Chrome DevTools MCP / Playwright MCP entries | 006 |
 | v1.7 | Firecracker production hardening (bare-metal node guidance) | 011 |
 | v1.x | Lightpanda alternate browser engine | 001 |
+| v1.x | **NVIDIA OpenShell integration** — sidecars in MicroVMs + L7 policy | 011, 036 (planned) |
+| v1.x | **Long-form artifact streaming** ([#201](https://github.com/tosin2013/helmdeck/issues/201)) — `ArtifactStore.PutStream` for multi-GB MP4/audio outputs (unblocks `hyperframes.render` long-form, podcast videos 30–60 min) | 037 (planned) |
+
+## v1.x — Enterprise integration tracks {#enterprise-integration-tracks}
+
+Post-GA themes that compose with the innovation tracks above but are scoped as community-led integration work rather than core platform features. Each is broken into independently-mergeable phases tracked as separate GitHub issues so contributors can pick up one phase without blocking on the others.
+
+### NVIDIA OpenShell integration
+
+**Theme:** "Helmdeck sidecars inside hardware-isolated, policy-governed sandboxes."
+
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) is a Rust-based safe runtime for autonomous AI agents — declarative YAML policies, OPA-enforced L7 network rules, libkrun MicroVM compute driver, Landlock filesystem isolation. Helmdeck's pack engine operates at the tool layer; OpenShell operates at the sandbox layer. The integration is non-duplicative — each project covers a layer the other doesn't.
+
+Canonical design doc: [`docs/integrations/openshell.md`](integrations/openshell.md).
+
+**Four phases (all post-v1.0):**
+
+1. **Shallow integration** — run the helmdeck control plane inside an OpenShell sandbox. Docs + example policy only. No helmdeck code changes. Good first issue.
+2. **Agent sandbox integration** — run the agent (OpenClaw / Claude Code / Hermes) inside an OpenShell sandbox with egress restricted to helmdeck MCP + `inference.local`. Docs + example policy. Extends `openclaw.md`'s topology section. Good first issue.
+3. **`OpenShellSessionRuntime` backend** — third `SessionRuntime` implementation (alongside `DockerSessionRuntime` and v1.0's `KubernetesSessionRuntime`) that routes sidecar lifecycle through the OpenShell Gateway API. Hardware-isolated browser / Python / Node sidecars. Help wanted; multi-week Go work. Lands a new ADR (036).
+4. **Correlated observability** — join helmdeck's OTel GenAI traces with OpenShell's OCSF security events on the sandbox ID. End-to-end traces from MCP tool call → policy decision → outbound HTTP. Help wanted; OTel collector + OPA experience.
+
+**Why post-v1.0:** Phase 3 modifies `SessionRuntime`, the seam between helmdeck's pack engine and execution backends. Touching it pre-GA forks the v1.0 test matrix; post-GA it's purely additive. Plus OpenShell is alpha — production deployments need a stable OpenShell Gateway API first.
+
+**Gating:** v1.0 ships first. Phases 1 and 2 can land as docs-only PRs once both projects are GA. Phases 3 and 4 wait on a stable OpenShell Gateway API (no calendar commitment).
 
 ---
 

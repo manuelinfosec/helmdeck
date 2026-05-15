@@ -1,21 +1,22 @@
 ---
 name: helmdeck
-description: Use helmdeck's 36 capability packs (browser, web scraping, slides, repo orientation, filesystem, git, GitHub, HTTP, vision, document OCR/parse, Python/Node execution) via MCP — all prefixed `helmdeck__*` in the tool catalog.
+description: Use helmdeck's 41 capability packs (browser, web scraping, content grounding, podcast/slide/blog/video production, image generation, stock photo search, repo orientation, filesystem, git, GitHub, HTTP, vision, document OCR/parse, Python/Node execution) via MCP — all prefixed `helmdeck__*` in the tool catalog.
 metadata:
   openclaw:
     skillKey: helmdeck
-    helmdeckVersion: "24bd0c3"
+    helmdeckVersion: "v0.13.0"
     source: https://github.com/tosin2013/helmdeck/blob/main/skills/helmdeck/SKILL.md
 ---
 
 <!-- This SKILL.md is the canonical helmdeck agent skill. Stamped at
-     helmdeck commit 24bd0c3. Re-run scripts/configure-openclaw.sh
-     after any helmdeck release so your OpenClaw agent picks up new packs
-     and updated decision tables. -->
+     helmdeck v0.13.0 (#200 added hyperframes.render, bringing the
+     in-tree catalog to 41 packs, with #217 adding stock.search). Re-run scripts/configure-openclaw.sh
+     after any helmdeck release so your OpenClaw agent picks up new
+     packs and updated decision tables. -->
 
 ## You are connected to helmdeck
 
-Helmdeck is a browser automation and AI capability platform. You have access to 36 tools exposed as MCP tools. Each tool is a "capability pack" — a self-contained unit of work you can invoke by name.
+Helmdeck is a browser automation and AI capability platform. You have access to 41 tools exposed as MCP tools. Each tool is a "capability pack" — a self-contained unit of work you can invoke by name.
 
 ## Pack catalog
 
@@ -33,7 +34,7 @@ Helmdeck is a browser automation and AI capability platform. You have access to 
 - `content.ground` — Extract claims from markdown and insert source citation links. **Two modes:** pass `text` directly (no session needed) OR pass `clone_path` + `path` for a file in a cloned repo. Always use the `text` field when the user provides markdown inline — do NOT ask for a file path. Produces a downloadable `grounded.md` artifact. **Requires Firecrawl overlay.**
 
 ### Slides
-- `slides.render` — Convert Marp markdown to PDF, PPTX, or HTML.
+- `slides.render` — Convert Marp markdown to PDF, PPTX, or HTML. **Theme picking** (#202): prefer one of the helmdeck-shipped curated themes for any deck that needs custom styling — `theme: helmdeck-dark` (modern technical/conference look) or `theme: helmdeck-corporate` (business/exec deck). Both declare colors for every nested element type (`section`, `h1`-`h6`, `p`, `a`, `table`, `th`, `td`, `code`, `pre`, `blockquote`) so the common LLM mistake of changing `section { background }` without restyling tables/code/blockquotes can't happen. **Authoring custom CSS?** Follow the WCAG-AA rule of thumb: body text needs **4.5:1** contrast against its background. When you override `section { background }` in a `style:` block, you MUST also override `table, th, td { background-color, color }`, `code { ... }`, `blockquote { ... }`, `pre { ... }` — otherwise the previous theme's table colors will glare through against the new background. The pack runs a static lint and surfaces problems via a `warnings: [{rule, selector, recommendation}]` array in the response; check it on every render and re-render if violations are flagged. Marp built-ins (`default`, `gaia`, `uncover`) are also safe — they're already tuned for contrast.
 - `slides.narrate` — Convert Marp markdown to a narrated MP4 video with ElevenLabs TTS and YouTube metadata. Speaker notes (`<!-- ... -->`) become narration. **CRITICAL: Pass the markdown EXACTLY as the user provides it — preserve `---` slide delimiters, `<!-- -->` HTML comments, and newlines. Do NOT escape or strip any formatting.** The markdown field must start with `---\nmarp: true\n---` frontmatter.
   - **Resource scaling**: encoding is sequential, so memory is bounded per-segment — not per-deck. Slide count scales **time** (~10-30s per slide) and **disk in `/tmp`** (~30-50 MB per segment MP4 until concat); it does **NOT** scale memory. The memory knob is `resolution`: default `1920x1080` needs ~1.1 GB for ffmpeg + ~700 MB for the Chromium baseline, which the session's 2 GB cap covers. Larger resolutions (e.g. `3840x2160`) may OOM — drop to `1280x720` if the user reports exit 137 from ffmpeg. Decks of 20-25 slides at 1080p are the tested default; anything much longer just takes longer, not more memory.
   - **Duration & YouTube optimization**: each slide's on-screen time = length of its TTS audio (slides without speaker notes get `default_slide_duration`, default 5s). ElevenLabs runs at ~150-160 wpm, so **1 word of speaker notes ≈ 0.4s of video**. Total length = sum of per-slide TTS durations (returned as `total_duration_s` in the output). Targets for a 20-25 slide deck:
@@ -51,6 +52,21 @@ Helmdeck is a browser automation and AI capability platform. You have access to 
 - `github.post_comment` — Comment on an issue or PR.
 - `github.create_release` — Create a GitHub release.
 - `github.search` — Search code, issues, or repos.
+
+### Blog
+- `blog.publish` — Publish a post to a Ghost blog (live Admin API) OR write rendered markdown/HTML to the helmdeck artifact store. Two body modes: pass `body` directly OR pass `prompt+model` and the pack expands the body via the gateway LLM. Two formats: `markdown` (default; rendered via goldmark when Ghost wants HTML) or `html` (passes through). Vault credential `ghost-admin-key` (id:hexsecret) for Ghost destination. Composes naturally with `research.deep` (find sources) → `content.ground` (cite sources in the body) → `blog.publish` (ship it).
+
+### Podcast
+- `podcast.generate` — Multi-speaker (1..N) podcast MP3 from a script, prompt, OR long-form content (URL/text). Speakers are a `{name: voice_id}` map; the same pack handles solo monologue and multi-host dialogue. Five closed-set `theme`s bake in podcast best practices: `interview`, `debate`, `news-roundup`, `deep-dive`, `solo-essay`. Day 1 uses ElevenLabs (vault `elevenlabs-key`); the `engine` field is reserved for future TTS providers. **Critical**: when using prompt or source modes, the agent supplies the speakers map upfront (with voice IDs) — the pack tells the LLM which speaker names to use. `generate_cover_prompt: true` returns an image-gen prompt for cover art; v0.12.0+ also accepts `cover_image: true` to chain image.generate directly and return a `cover_image_artifact_key`. Composes with `research.deep` → `podcast.generate` (theme `news-roundup` or `deep-dive`) for evidence-grounded shows.
+
+### Image
+- `image.generate` — Text → image via fal.ai (`fal-ai/flux/schnell` default, ~$0.003/image, 1-3s). Vault `fal-key` or `HELMDECK_FAL_KEY`. 1-4 images per call. Use for podcast covers, slide shields, blog hero images. The `engine` field is `"fal"` only day 1; Replicate is reserved for a community PR. Pair with `podcast.generate`'s `generate_cover_prompt: true` to chain prompt → cover art in two pack calls — or use the v0.12.0 chained inputs (`cover_image`, `hero_image_prompt`, `feature_image_artifact_key`) on the content packs to skip the intermediate step entirely.
+
+### Stock photography
+- `stock.search` (#217) — Search Pexels for stock photos matching a query and download the top 1-4 results into the artifact store. Vault credential `pexels-key` or `HELMDECK_PEXELS_API_KEY` (free tier 200 req/hr; get a key at <https://www.pexels.com/api/>). Output is `artifact_keys: [...]` plus per-photo `results: [{photographer, photographer_url, source_url, width, height, alt_text, artifact_key}]` — **same chained-input contract as `image.generate`**, so the downloaded photos drop straight into `slides.render` (hero), `slides.narrate` (hero), `blog.publish` (`feature_image_artifact_key`), `podcast.generate` (`cover_image_artifact_key`), `hyperframes.render` (embed presigned URL in composition HTML). Use **stock.search** when the user wants real photography (corporate decks, customer-facing blog feature images); use **image.generate** when they want generated art. Filter knobs: `orientation` (landscape/portrait/square), `size` (large/medium/small min-size), `color` (hex or name). `engine: "pexels"` only day 1; Unsplash/Pixabay land later. `media_type: "video"` reserved for follow-up PR. Free for commercial use; surface `photographer` + `source_url` in any customer-facing output as the polite default (Pexels doesn't legally require attribution).
+
+### Video
+- `hyperframes.render` — HTML/CSS/JS composition → deterministic MP4 via Chromium BeginFrame + ffmpeg (upstream [hyperframes CLI](https://github.com/heygen-com/hyperframes)). Sizing is composable: `resolution` (1080p / 4k) × `aspect_ratio` (`16:9` standard, `9:16` Shorts/TikTok/Reels, `1:1` IG feed). Six supported tuples map to the upstream CLI's `--resolution` presets (`landscape` / `portrait` / `square` ± `-4k`). **Author the composition at the target aspect ratio** — upstream's resolution flag is an integer-multiple upscale knob, not a dimension setter. Two modes with NO handler branching: composition has no `<audio>` tag → silent animation; composition has an inline `<audio src>` → MP4 carries audio. **Chained workflow**: call `podcast.generate` first, embed the returned presigned audio URL as the composition's `<audio src>`, then `hyperframes.render` produces a narrated video. **Short-form only** (≤12 min, 512 MiB cap); larger compositions return CodeHandlerFailed pointing at #201 for the long-form streaming track. Runs inside the `helmdeck-sidecar-hyperframes` image (env override `HELMDECK_SIDECAR_HYPERFRAMES`).
 
 ### Repository
 - `repo.fetch` — Clone a git repo into a session. Returns `clone_path`, `session_id`, **and a context envelope** (`tree`, `readme`, `entrypoints`, `signals`) so you can orient immediately without follow-up calls. See "Repo discovery pattern" below.

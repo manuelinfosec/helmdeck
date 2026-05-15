@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/tosin2013/helmdeck/internal/gateway"
 	"github.com/tosin2013/helmdeck/internal/inject"
 	"github.com/tosin2013/helmdeck/internal/keystore"
+	"github.com/tosin2013/helmdeck/internal/marketplace"
 	"github.com/tosin2013/helmdeck/internal/mcp"
 	"github.com/tosin2013/helmdeck/internal/packs"
 	"github.com/tosin2013/helmdeck/internal/packs/builtin"
@@ -266,6 +268,30 @@ func main() {
 		logger.Warn("initial gateway hydrate failed; /v1/* will be partial or empty", "err", err)
 	}
 
+	// T810 (#28): marketplace catalog service. Reads
+	// HELMDECK_MARKETPLACE_URL (default per ADR 034) and exposes
+	// /api/v1/marketplace/catalog + /refresh. Setting
+	// HELMDECK_MARKETPLACE_DISABLE=1 turns the endpoints off
+	// entirely (returns 503) for air-gapped deployments. The
+	// startup refresh is async + best-effort — a slow upstream
+	// shouldn't block control-plane boot.
+	var marketplaceSvc *marketplace.Service
+	if os.Getenv("HELMDECK_MARKETPLACE_DISABLE") != "1" {
+		mpURL := os.Getenv("HELMDECK_MARKETPLACE_URL")
+		if mpURL == "" {
+			mpURL = marketplace.DefaultMarketplaceURL
+		}
+		marketplaceSvc = marketplace.NewService(mpURL, logger.With("subsystem", "marketplace"))
+		go func() {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := marketplaceSvc.Refresh(refreshCtx); err != nil {
+				logger.Warn("initial marketplace refresh failed; catalog will be empty until /refresh succeeds",
+					"err", err)
+			}
+		}()
+	}
+
 	deps := api.Deps{
 		Logger:           logger,
 		Version:          version,
@@ -278,6 +304,7 @@ func main() {
 		MCPRegistry: mcp.NewRegistry(db),
 		Vault:       vaultStore,
 		Injector:    inject.New(vaultStore, logger.With("subsystem", "inject")),
+		Marketplace: marketplaceSvc,
 		// T607: expose the SQLite handle so the providers/stats
 		// endpoint can run aggregation queries against
 		// provider_calls. Other DB-backed endpoints land here
@@ -287,6 +314,31 @@ func main() {
 	}
 	packReg := packs.NewPackRegistry()
 	deps.PackRegistry = packReg
+
+	// T812 (#30): install/uninstall plumbing. Defaults the install
+	// dir to ~/.helmdeck/packs (per ADR 034) but operators can
+	// override via HELMDECK_PACKS_DIR. The installer needs both the
+	// marketplace service (for catalog lookups) and the pack
+	// registry (for hot-load), so it's constructed AFTER packReg.
+	if marketplaceSvc != nil {
+		installDir := os.Getenv("HELMDECK_PACKS_DIR")
+		if installDir == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				installDir = filepath.Join(home, ".helmdeck", "packs")
+			}
+		}
+		if installDir != "" {
+			if err := os.MkdirAll(installDir, 0o755); err == nil {
+				deps.MarketplaceInstaller = marketplace.NewInstaller(
+					marketplaceSvc, packReg, installDir,
+					logger.With("subsystem", "marketplace.install"))
+				logger.Info("marketplace installer ready", "install_dir", installDir)
+			} else {
+				logger.Warn("marketplace install dir not creatable; install endpoints disabled",
+					"install_dir", installDir, "err", err)
+			}
+		}
+	}
 
 	engineOpts := []packs.Option{packs.WithRuntime(rt), packs.WithLogger(logger)}
 	var artifactStore packs.ArtifactStore
@@ -390,6 +442,14 @@ func main() {
 	// shape as podcast.generate / slides.narrate (#138).
 	if err := packReg.Register(builtin.ImageGenerate(vaultStore, egressGuard)); err != nil {
 		logger.Warn("register image.generate pack failed", "err", err)
+	}
+	// stock.search (#217): Pexels-backed stock photo search. Same
+	// pattern as image.generate — pack-registered unconditionally;
+	// the handler hard-fails with a typed missing_credential error
+	// when neither HELMDECK_PEXELS_API_KEY nor a `pexels-key` vault
+	// entry is configured. Engine-pluggable (Unsplash/Pixabay follow).
+	if err := packReg.Register(builtin.StockSearch(vaultStore, egressGuard)); err != nil {
+		logger.Warn("register stock.search pack failed", "err", err)
 	}
 	// T807b (ADR 035): web.scrape is Firecrawl-backed. The pack is
 	// registered unconditionally so agents discovering the catalog
@@ -517,6 +577,15 @@ func main() {
 	// configured.
 	if err := packReg.Register(builtin.PodcastGenerate(vaultStore, egressGuard, nil)); err != nil {
 		logger.Warn("register podcast.generate pack failed", "err", err)
+	}
+
+	// hyperframes.render (#200): HTML/CSS/JS composition → MP4 via
+	// the helmdeck-sidecar-hyperframes image. No dispatcher / vault /
+	// egress dependency — the render runs entirely inside the sidecar
+	// and the composition supplies its own assets (or embeds a
+	// presigned podcast.generate audio URL for chained workflows).
+	if err := packReg.Register(builtin.HyperframesRender()); err != nil {
+		logger.Warn("register hyperframes.render pack failed", "err", err)
 	}
 
 	// Operator-supplied command packs (T811 MVP). Drop executables
