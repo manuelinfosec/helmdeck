@@ -143,6 +143,31 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/* /root/.npm
 
+# Layer 4c — install smoke (ADR 037 #214). Cheap `--version` checks
+# that catch a yanked release, a typo-squat, or a flat-out missing
+# install at `docker build` time. They cost ~1s and need no upstream
+# knowledge of which flags helmdeck actually consumes.
+#
+# The richer flag-by-flag CLI-surface assertion (does `marp --help`
+# document every flag slides_render.go passes by name?) is in the
+# Go test at internal/packs/builtin/cli_surface_invariant_test.go
+# (build-tagged `integration`, runs against the built image post-
+# build). That's a better layer for it because:
+#   1. Test failures show as named test output, not a buildkit exit
+#      code with a 40-line concatenated shell command;
+#   2. Allowlisting deliberately-undocumented flags (marp --stdin,
+#      etc.) needs a structured exception with a reason — easy in
+#      a Go test, painful in a Dockerfile RUN;
+#   3. The Go AST walk derives the flag list from pack source, so
+#      adding a new flag to a pack's argv automatically gets
+#      verified without any Dockerfile edit.
+# Together: smoke here catches "install broke"; the Go test catches
+# "install OK but flag set drifted from what helmdeck uses."
+RUN marp --version \
+ && mmdc --version \
+ && ffmpeg -version >/dev/null \
+ && test -e /usr/lib/node_modules/@playwright/mcp/package.json
+
 # Layer 5 — non-root user, runtime dirs, entrypoint
 RUN groupadd --system --gid 1000 helmdeck \
  && useradd  --system --uid 1000 --gid helmdeck --shell /bin/bash --create-home helmdeck \
