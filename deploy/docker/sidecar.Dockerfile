@@ -13,10 +13,14 @@
 
 FROM debian:bookworm-slim
 ARG DEBIAN_FRONTEND=noninteractive
-# marp-cli version, installed via npm in Layer 4b so the same layer
-# works on amd64 and arm64. The pre-built binary releases only
-# publish amd64 tarballs
+# Pinned tool versions (ADR 037 #213). Every npm package installed
+# globally in this Dockerfile has its own ARG so Dependabot can
+# target the pin and so the build fails loud if the upstream rename-
+# squats or yanks. Dependabot regex: ARG <NAME>_VERSION=<value>.
+# Do NOT replace any of these with `@latest` / `@stable` / `^x` / `~x`.
 ARG MARP_VERSION=4.0.4
+ARG PLAYWRIGHT_MCP_VERSION=0.0.75
+ARG MERMAID_CLI_VERSION=11.15.0
 
 # Layer 1 — base, locale, fonts, CA bundle
 #
@@ -131,13 +135,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # entrypoint, so exposing it here is just a hint for `docker inspect`.
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update && apt-get install -y --no-install-recommends nodejs \
- && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g @playwright/mcp@latest \
- && PUPPETEER_SKIP_DOWNLOAD=1 npm install -g @mermaid-js/mermaid-cli@latest \
- && npm install -g @marp-team/marp-cli@${MARP_VERSION} \
+ && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
+ && PUPPETEER_SKIP_DOWNLOAD=1 npm install -g "@mermaid-js/mermaid-cli@${MERMAID_CLI_VERSION}" \
+ && npm install -g "@marp-team/marp-cli@${MARP_VERSION}" \
  && mkdir -p /etc/mmdc \
  && printf '{\n  "executablePath": "/usr/bin/chromium",\n  "args": ["--no-sandbox", "--disable-dev-shm-usage"]\n}\n' > /etc/mmdc/puppeteer-config.json \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/* /root/.npm
+
+# Layer 4c — install smoke (ADR 037 #214). Cheap `--version` checks
+# that catch a yanked release, a typo-squat, or a flat-out missing
+# install at `docker build` time. They cost ~1s and need no upstream
+# knowledge of which flags helmdeck actually consumes.
+#
+# The richer flag-by-flag CLI-surface assertion (does `marp --help`
+# document every flag slides_render.go passes by name?) is in the
+# Go test at internal/packs/builtin/cli_surface_invariant_test.go
+# (build-tagged `integration`, runs against the built image post-
+# build). That's a better layer for it because:
+#   1. Test failures show as named test output, not a buildkit exit
+#      code with a 40-line concatenated shell command;
+#   2. Allowlisting deliberately-undocumented flags (marp --stdin,
+#      etc.) needs a structured exception with a reason — easy in
+#      a Go test, painful in a Dockerfile RUN;
+#   3. The Go AST walk derives the flag list from pack source, so
+#      adding a new flag to a pack's argv automatically gets
+#      verified without any Dockerfile edit.
+# Together: smoke here catches "install broke"; the Go test catches
+# "install OK but flag set drifted from what helmdeck uses."
+RUN marp --version \
+ && mmdc --version \
+ && ffmpeg -version >/dev/null \
+ && test -e /usr/lib/node_modules/@playwright/mcp/package.json
 
 # Layer 5 — non-root user, runtime dirs, entrypoint
 RUN groupadd --system --gid 1000 helmdeck \
