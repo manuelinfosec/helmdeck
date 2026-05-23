@@ -16,6 +16,18 @@ and the hard exit gates for each — see
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-05-23
+
+**Theme:** Hot-patch for the v0.13.1 release that shipped without a control-plane image. No code-behavior changes, only the build pipeline that produces the image is unblocked.
+
+### Fixed
+
+- `web/` build now succeeds under Vite 8 + TypeScript 6 + lucide-react 1, restoring the `Publish control-plane image` step that failed silently on the v0.13.1 tag push. Dependabot PR #247 carried three breaking major bumps in one auto-merged group (Vite 6 → 8, TypeScript 5 → 6, lucide-react 0 → 1), each of which broke the web build. CI never exercised the failure because the `CI` workflow only builds the Go binary — only the `Release` workflow builds `web/`, so the regression was invisible until the v0.13.1 tag fired the release pipeline. Goreleaser binaries, `helmdeck-bridge:0.13.1`, and `@helmdeck/mcp-bridge@0.13.1` on npm shipped fine; only `ghcr.io/tosin2013/helmdeck:0.13.1` (the control-plane image) was missing. Three concrete fixes: (a) **Vite 8 swapped Rollup for Rolldown**, whose `manualChunks` only accepts the function form, so the declarative chunk-grouping moves to `codeSplitting.groups` — same two-chunk layout (`react` + `query`) preserved; (b) **TypeScript 6 removed `baseUrl`**, so paths are relative under `./src/*` and a new `web/src/vite-env.d.ts` (`/// <reference types="vite/client" />`) restores side-effect CSS module resolution under TS 6's stricter rules; (c) **lucide-react 1 dropped brand icons**, so the GitHub-PAT preset swaps `Github` for `GitBranch` — purely visual, the preset label still names the system. (#250)
+
+## [0.13.1] - 2026-05-18
+
+**Theme:** Post-v0.13.0 cleanup. No feature changes. Four post-release bugs found during v0.13.0 → v0.13.1 upgrade verification, each documented per-issue with a reproducer.
+
 ### Fixed
 - `repo.fetch` now surfaces `session_id` inside its `output` (not only on the response envelope), so follow-on packs (`fs.*`, `cmd.run`, `git.*`, `repo.push`) can find the value adjacent to `clone_path`. Without this, callers reading only `output.clone_path` missed the session_id on the envelope, then issued follow-up calls without `_session_id`, which made the engine spin up a fresh session whose `/tmp` did not contain the clone — surfacing as silent empty results (`fs.list`, `repo.map`) or `cannot open` errors (`fs.read`, `cmd.run`). New `internal/packs/builtin/session_reuse_integration_test.go` (build-tagged `integration`) pins the cross-pack session reuse contract against a real Docker daemon so this can't silently regress. (#232)
 - `deploy/compose/.env.example` now documents `HELMDECK_ELEVENLABS_API_KEY`, `HELMDECK_FAL_KEY`, and `HELMDECK_PEXELS_API_KEY`. These keys have first-class vault auto-hydration but were absent from the example file an operator copies on first install, so the only way to discover them was via a CHANGELOG entry or a pack's "key not found" error message. (#229)
