@@ -600,6 +600,10 @@ func main() {
 		}
 	}
 
+	if err := packReg.Register(builtin.EmailSend(vaultStore)); err != nil {
+		logger.Warn("register command pack failed", "err", err)
+	}	
+
 	if *disableAuth {
 		deps.Issuer = nil
 		logger.Warn("auth disabled by flag; /api/v1/* is unprotected (DEV ONLY)")
