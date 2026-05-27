@@ -92,74 +92,132 @@ type emailSendInput struct {
 	Html    string  `json:"html"`
 }
 
+type emailSendOutput struct {
+	MessageID string `json:"message_id"`
+}
+
 // emailSendHandler handles email sending via Resend with Vault-supplied API key.
 func emailSendHandler(v *vault.Store, factory emailSenderFactory) packs.HandlerFunc {
 	return func(ctx context.Context, ec *packs.ExecutionContext) (json.RawMessage, error) {
+
 		var in emailSendInput
 		var credName = "resend-api-key"
 
 		if err := json.Unmarshal(ec.Input, &in); err != nil {
-			return nil, &packs.PackError{Code: packs.CodeInvalidInput, Message: err.Error(), Cause: err}
+
+			return nil, &packs.PackError{
+				Code:    packs.CodeInvalidInput,
+				Message: err.Error(),
+				Cause:   err,
+			}
 		}
+
 		if in.To == "" {
-			return nil, &packs.PackError{Code: packs.CodeInvalidInput, Message: "recipient is required"}
+			return nil, &packs.PackError{
+				Code:    packs.CodeInvalidInput,
+				Message: "recipient is required",
+			}
 		}
+
 		if in.Subject == "" {
-			return nil, &packs.PackError{Code: packs.CodeInvalidInput, Message: "subject is required"}
+			return nil, &packs.PackError{
+				Code:    packs.CodeInvalidInput,
+				Message: "subject is required",
+			}
 		}
 
 		actor := vault.Actor{Subject: "*"}
+
 		res, err := v.ResolveByName(ctx, actor, credName)
 		if err != nil {
-			return nil, &packs.PackError{Code: packs.CodeInvalidInput, Message: fmt.Sprintf("vault credential %q not found (Configure a valid Resend API key to send emails)", credName)}
+
+			return nil, &packs.PackError{
+				Code: packs.CodeInvalidInput,
+				Message: fmt.Sprintf(
+					"vault credential %q not found (Configure a valid Resend API key to send emails)",
+					credName,
+				),
+			}
+		}
+
+		if len(res.Plaintext) > 0 {
+		} else {
 		}
 
 		svc := factory.New(string(res.Plaintext))
 
 		// Verify that the sender's email is verified on Resend
-		if in.From == "" {
+		if in.From != "" {
+
 			fromDomain := extractDomain(in.From)
+
 			domains, err := svc.ListDomains(ctx)
 			if err != nil {
-				return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
+
+				return nil, &packs.PackError{
+					Code:    packs.CodeHandlerFailed,
+					Message: err.Error(),
+					Cause:   err,
+				}
 			}
-			if !isVerifiedSenderDomain(domains.Data, fromDomain) {
-				return nil, &packs.PackError{Code: packs.CodeInvalidInput, Message: fmt.Sprintf("cannot send email from %q (Sender domain is not verified on Resend)", in.From)}
+
+			// If the user doesn't have any registered domain(s) on Resend,
+			// default to the default test email.
+			if len(domains.Data) == 0 {
+				in.From = "onboarding@resend.dev"
+			} else if !isVerifiedSenderDomain(domains.Data, fromDomain) {
+
+				return nil, &packs.PackError{
+					Code: packs.CodeInvalidInput,
+					Message: fmt.Sprintf(
+						"cannot send email from %q (Sender domain is not verified on Resend)",
+						in.From,
+					),
+				}
 			}
 		}
 
-
-		// nil check before dereferencing
 		var cc []string
 		if in.Cc != nil {
 			cc = []string{*in.Cc}
+		} else {
 		}
 
 		var bcc []string
 		if in.Bcc != nil {
 			bcc = []string{*in.Bcc}
+		} else {
 		}
 
 		var replyTo string
 		if in.ReplyTo != nil {
 			replyTo = *in.ReplyTo
-
+		} else {
 		}
 
 		emailRequest := &resend.SendEmailRequest{
 			From:    in.From,
-			To:      []string{in.To}, // TODO: Expand to accept slice of recipients
+			To:      []string{in.To},
 			Subject: in.Subject,
 			Cc:      cc,
 			Bcc:     bcc,
+			Html:    in.Html,
 			ReplyTo: replyTo,
 		}
 
 		sent, err := svc.SendEmail(ctx, emailRequest)
 		if err != nil {
-			return nil, &packs.PackError{Code: packs.CodeHandlerFailed, Message: err.Error(), Cause: err}
+
+			return nil, &packs.PackError{
+				Code:    packs.CodeHandlerFailed,
+				Message: err.Error(),
+				Cause:   err,
+			}
 		}
-		return json.Marshal(sent)
+
+		return json.Marshal(emailSendOutput{
+			MessageID: sent.Id,
+		})
 	}
 }
 
