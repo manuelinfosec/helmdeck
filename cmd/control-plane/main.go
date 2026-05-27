@@ -672,6 +672,10 @@ func main() {
 		}
 	}
 
+	if err := packReg.Register(builtin.EmailSend(vaultStore)); err != nil {
+		logger.Warn("register command pack failed", "err", err)
+	}	
+
 	// Pipelines (ADR 041). Built after all packs are registered so seeding
 	// can confirm each starter's packs exist; a starter whose packs aren't
 	// present (e.g. a vision pack with no gateway) is skipped-and-logged so
